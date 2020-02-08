@@ -1,30 +1,98 @@
 package main
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/md5"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gorilla/mux"
 )
 
 var dbs map[string]string
 var locks map[string]*sync.Mutex
+var encryptionKey = ""
 
 func main() {
 	fmt.Println("CrabDB Started")
 
 	dbs = make(map[string]string)
 	locks = make(map[string]*sync.Mutex)
+	loadDatabases()
+	go bufferWriter()
 
 	r := mux.NewRouter()
 	r.HandleFunc("/db/{id}", handleDB)
 
 	http.ListenAndServe(":8090", r)
+}
+
+func loadDatabases() {
+	_, err := os.Stat("./data/crab")
+	if os.IsNotExist(err) {
+		_, err := os.Create("./data/crab")
+		if err != nil {
+			fmt.Println("Failed to create persistent storage", err)
+		}
+	} else {
+		dat, err := ioutil.ReadFile("./data/crab")
+		if err != nil {
+			fmt.Println("Failed loading file:", err)
+		} else {
+			if encryptionKey != "" {
+				dat = decrypt([]byte(dat), encryptionKey)
+			}
+			err = json.Unmarshal([]byte(dat), &dbs)
+			if err != nil {
+				fmt.Println("Failed processing file", err)
+			} else {
+				for k := range dbs {
+					locks[k] = &sync.Mutex{}
+				}
+			}
+		}
+	}
+
+}
+
+func bufferWriter() {
+	for {
+		//Lock all the DBs
+		for _, v := range locks {
+			v.Lock()
+		}
+
+		outputBytes, err := json.Marshal(dbs)
+		if err != nil {
+			fmt.Println("Failed to generate json.")
+		} else {
+			if encryptionKey != "" {
+				outputBytes = encrypt(outputBytes, encryptionKey)
+			}
+			err := ioutil.WriteFile("./data/crab", outputBytes, 0644)
+			if err != nil {
+				fmt.Println(err)
+			}
+		}
+
+		//Unlock all the DBs
+		for _, v := range locks {
+			v.Unlock()
+		}
+
+		time.Sleep(5 * time.Second)
+	}
 }
 
 func applyJSON(o string, i string) (output string, outErr error) {
@@ -148,4 +216,44 @@ func handleDB(w http.ResponseWriter, req *http.Request) {
 			fmt.Fprintf(w, "Invalid operation")
 		}
 	}
+}
+
+// Got these from: https://www.thepolyglotdeveloper.com/2018/02/encrypt-decrypt-data-golang-application-crypto-packages/
+func encrypt(data []byte, passphrase string) []byte {
+	block, _ := aes.NewCipher([]byte(createHash(passphrase)))
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		panic(err.Error())
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err = io.ReadFull(rand.Reader, nonce); err != nil {
+		panic(err.Error())
+	}
+	ciphertext := gcm.Seal(nonce, nonce, data, nil)
+	return ciphertext
+}
+
+func decrypt(data []byte, passphrase string) []byte {
+	key := []byte(createHash(passphrase))
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		panic(err.Error())
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		panic(err.Error())
+	}
+	nonceSize := gcm.NonceSize()
+	nonce, ciphertext := data[:nonceSize], data[nonceSize:]
+	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		panic(err.Error())
+	}
+	return plaintext
+}
+
+func createHash(key string) string {
+	hasher := md5.New()
+	hasher.Write([]byte(key))
+	return hex.EncodeToString(hasher.Sum(nil))
 }
