@@ -13,6 +13,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -22,8 +23,8 @@ import (
 
 var dbs map[string]string
 var locks map[string]*sync.Mutex
-var encryptionKey = ""
-var dataLocation = "./crab"
+var encryptionKey = "CrabsAreCool"
+var dataLocation = "data"
 
 func main() {
 	fmt.Println("CrabDB Started")
@@ -41,58 +42,54 @@ func main() {
 }
 
 func loadDatabases() {
-	_, err := os.Stat(dataLocation)
-	if os.IsNotExist(err) {
-		_, err := os.Create(dataLocation)
+	if _, err := os.Stat(dataLocation); os.IsNotExist(err) {
+		err = os.MkdirAll(dataLocation, 0755)
 		if err != nil {
-			fmt.Println("Failed to create persistent storage", err)
+			panic(err)
 		}
 	} else {
-		dat, err := ioutil.ReadFile(dataLocation)
-		if err != nil {
-			fmt.Println("Failed loading file:", err)
-		} else {
-			if encryptionKey != "" {
-				dat = decrypt([]byte(dat), encryptionKey)
-			}
-			err = json.Unmarshal([]byte(dat), &dbs)
+		err = filepath.Walk(dataLocation, func(path string, info os.FileInfo, err error) error {
+			fmt.Println("Path", path)
+			dat, err := ioutil.ReadFile(path)
 			if err != nil {
-				fmt.Println("Failed processing file", err)
+				fmt.Println("Failed loading file:", err)
 			} else {
-				for k := range dbs {
-					locks[k] = &sync.Mutex{}
+				if encryptionKey != "" {
+					dat = decrypt([]byte(dat), encryptionKey)
 				}
+
+				dbID := strings.Split(path, dataLocation+"/")[1]
+				dbs[dbID] = string(dat)
 			}
+			return nil
+		})
+
+		for k := range dbs {
+			locks[k] = &sync.Mutex{}
 		}
 	}
+}
 
+func writeDBToFile(dbID string) {
+	locks[dbID].Lock()
+	outputBytes := []byte(dbs[dbID])
+	if encryptionKey != "" {
+		outputBytes = encrypt(outputBytes, encryptionKey)
+	}
+	err := ioutil.WriteFile(dataLocation+"/"+dbID, outputBytes, 0644)
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	locks[dbID].Unlock()
 }
 
 func bufferWriter() {
 	for {
 		//Lock all the DBs
-		for _, v := range locks {
-			v.Lock()
+		for k := range locks {
+			go writeDBToFile(k)
 		}
-
-		outputBytes, err := json.Marshal(dbs)
-		if err != nil {
-			fmt.Println("Failed to generate json.")
-		} else {
-			if encryptionKey != "" {
-				outputBytes = encrypt(outputBytes, encryptionKey)
-			}
-			err := ioutil.WriteFile(dataLocation, outputBytes, 0644)
-			if err != nil {
-				fmt.Println(err)
-			}
-		}
-
-		//Unlock all the DBs
-		for _, v := range locks {
-			v.Unlock()
-		}
-
 		time.Sleep(5 * time.Second)
 	}
 }
