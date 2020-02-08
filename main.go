@@ -52,6 +52,7 @@ type Credentials struct {
 }
 
 func main() {
+	flag.Parse()
 	fmt.Println("CrabDB Started")
 	sessions = make(map[string]Session)
 	dbs = make(map[string]string)
@@ -87,19 +88,24 @@ func sessionGroomer() {
 }
 
 func loadConfig() {
-	cek, err := ioutil.ReadFile("config/encryptionkey")
-	if err == nil {
-		encryptionKey = string(cek)
-	}
-
-	userJSON, err := ioutil.ReadFile("config/users.json")
-
-	if err == nil {
-		err := json.Unmarshal([]byte(userJSON), &users)
-		if err != nil {
-			fmt.Println("Failed reading users")
+	for {
+		cek, err := ioutil.ReadFile("config/encryptionkey")
+		if err == nil {
+			encryptionKey = string(cek)
 		}
+
+		userJSON, err := ioutil.ReadFile("config/users.json")
+
+		if err == nil {
+			err := json.Unmarshal([]byte(userJSON), &users)
+			if err != nil {
+				fmt.Println("Failed reading users")
+			}
+		}
+		fmt.Println(users)
+		time.Sleep(5 * time.Second)
 	}
+
 }
 
 func loadDatabases() {
