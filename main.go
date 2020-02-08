@@ -10,6 +10,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/google/uuid"
+	"github.com/gorilla/mux"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -18,8 +20,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/gorilla/mux"
 )
 
 var dbs map[string]string
@@ -31,18 +31,40 @@ var keyFile = flag.String("key-file", "", "location of key file")
 var port = flag.String("port", "8090", "port to host on")
 var dataLocation = flag.String("data-location", "data", "port to host on")
 
+type User struct {
+	Username string
+	Password string
+	Access   string
+}
+
+var users = map[string]User{}
+
+type Session struct {
+	lastUsed time.Time
+	userName string
+}
+
+var sessions map[string]Session
+
+type Credentials struct {
+	Password string `json:"password"`
+	Username string `json:"username"`
+}
+
 func main() {
 	fmt.Println("CrabDB Started")
-
+	sessions = make(map[string]Session)
 	dbs = make(map[string]string)
 	locks = make(map[string]*sync.Mutex)
 	loadConfig()
 	loadDatabases()
 	go bufferWriter()
+	go sessionGroomer()
 
 	r := mux.NewRouter()
 	r.HandleFunc("/db/{id}", handleDB)
 	r.HandleFunc("/", handleProbe)
+	r.HandleFunc("/auth", handleAuth)
 
 	if *certFile == "" || *keyFile == "" {
 		http.ListenAndServe(":"+*port, r)
@@ -52,10 +74,31 @@ func main() {
 
 }
 
+func sessionGroomer() {
+	for {
+		for k, v := range sessions {
+			if time.Since(v.lastUsed).Seconds() > 120 {
+				fmt.Println("Remove session: ", k)
+				delete(sessions, k)
+			}
+		}
+		time.Sleep(time.Second * 1)
+	}
+}
+
 func loadConfig() {
 	cek, err := ioutil.ReadFile("config/encryptionkey")
 	if err == nil {
 		encryptionKey = string(cek)
+	}
+
+	userJSON, err := ioutil.ReadFile("config/users.json")
+
+	if err == nil {
+		err := json.Unmarshal([]byte(userJSON), &users)
+		if err != nil {
+			fmt.Println("Failed reading users")
+		}
 	}
 }
 
@@ -172,15 +215,84 @@ func handleProbe(w http.ResponseWriter, req *http.Request) {
 	fmt.Fprintf(w, "{}")
 }
 
+func handleAuth(w http.ResponseWriter, req *http.Request) {
+	if req.Method == "POST" {
+		var creds Credentials
+
+		err := json.NewDecoder(req.Body).Decode(&creds)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
+		expectedUser, ok := users[creds.Username]
+
+		if !ok {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		if expectedUser.Password != creds.Password {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		sessionToken, err := uuid.NewUUID()
+
+		sessions[sessionToken.String()] = Session{userName: creds.Username, lastUsed: time.Now()}
+
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+		http.SetCookie(w, &http.Cookie{
+			Name:    "session_token",
+			Value:   sessionToken.String(),
+			Expires: time.Now().Add(120 * time.Second),
+		})
+
+	} else {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		fmt.Fprintf(w, "Invalid operation")
+	}
+}
+
 func handleDB(w http.ResponseWriter, req *http.Request) {
 	vars := mux.Vars(req)
 	dbID := vars["id"]
+
+	session := req.Header.Get("session")
+
+	_, ok := sessions[session]
+	if !ok {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+
+	sessionStruct := sessions[session]
+	sessionStruct.lastUsed = time.Now()
+	sessions[session] = sessionStruct
+	availableDBs := strings.Split(users[sessionStruct.userName].Access, ",")
+
+	accessCheck := false
+	for _, v := range availableDBs {
+		if dbID == v {
+			accessCheck = true
+		}
+	}
+
+	if !accessCheck {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
 
 	//Provide a DB please.
 	if dbID == "" {
 		w.WriteHeader(http.StatusBadRequest)
 		fmt.Fprintf(w, "No DB Provided")
 	} else {
+
 		// If the DB is new create it as an empty json.
 		if dbs[dbID] == "" {
 			dbs[dbID] = "{}"
