@@ -1,6 +1,6 @@
 REPO = jaeg/crabdb
 BINARY = crabdb
-VERSION = 1.0.0
+VERSION = 1.0.2
 
 image: build-linux
 	docker build -t $(REPO):$(VERSION) . --build-arg binary=$(BINARY)-linux --build-arg version=$(VERSION)

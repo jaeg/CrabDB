@@ -23,6 +23,7 @@ import (
 var dbs map[string]string
 var locks map[string]*sync.Mutex
 var encryptionKey = ""
+var dataLocation = "./crab"
 
 func main() {
 	fmt.Println("CrabDB Started")
@@ -34,19 +35,20 @@ func main() {
 
 	r := mux.NewRouter()
 	r.HandleFunc("/db/{id}", handleDB)
+	r.HandleFunc("/", handleProbe)
 
 	http.ListenAndServe(":8090", r)
 }
 
 func loadDatabases() {
-	_, err := os.Stat("./data/crab")
+	_, err := os.Stat(dataLocation)
 	if os.IsNotExist(err) {
-		_, err := os.Create("./data/crab")
+		_, err := os.Create(dataLocation)
 		if err != nil {
 			fmt.Println("Failed to create persistent storage", err)
 		}
 	} else {
-		dat, err := ioutil.ReadFile("./data/crab")
+		dat, err := ioutil.ReadFile(dataLocation)
 		if err != nil {
 			fmt.Println("Failed loading file:", err)
 		} else {
@@ -80,7 +82,7 @@ func bufferWriter() {
 			if encryptionKey != "" {
 				outputBytes = encrypt(outputBytes, encryptionKey)
 			}
-			err := ioutil.WriteFile("./data/crab", outputBytes, 0644)
+			err := ioutil.WriteFile(dataLocation, outputBytes, 0644)
 			if err != nil {
 				fmt.Println(err)
 			}
@@ -149,6 +151,10 @@ func deleteEntry(m map[string]interface{}, entries []string) (outMap map[string]
 		delete(outMap, entries[0])
 	}
 	return
+}
+
+func handleProbe(w http.ResponseWriter, req *http.Request) {
+	fmt.Fprintf(w, "{}")
 }
 
 func handleDB(w http.ResponseWriter, req *http.Request) {
