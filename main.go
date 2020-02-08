@@ -7,16 +7,24 @@ import (
 	"io/ioutil"
 	"net/http"
 	"strings"
+	"sync"
+
+	"github.com/gorilla/mux"
 )
 
-var db = "{}"
+var dbs map[string]string
+var locks map[string]*sync.Mutex
 
 func main() {
 	fmt.Println("CrabDB Started")
 
-	http.HandleFunc("/db", handleDB)
+	dbs = make(map[string]string)
+	locks = make(map[string]*sync.Mutex)
 
-	http.ListenAndServe(":8090", nil)
+	r := mux.NewRouter()
+	r.HandleFunc("/db/{id}", handleDB)
+
+	http.ListenAndServe(":8090", r)
 }
 
 func applyJSON(o string, i string) (output string, outErr error) {
@@ -76,52 +84,68 @@ func deleteEntry(m map[string]interface{}, entries []string) (outMap map[string]
 }
 
 func handleDB(w http.ResponseWriter, req *http.Request) {
-	if req.Method == "GET" {
-		fmt.Fprintf(w, db)
-	} else if req.Method == "PUT" {
-		body, err := ioutil.ReadAll(req.Body)
-		if err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			fmt.Fprintf(w, err.Error())
-		} else {
-			result, err := applyJSON(db, string(body))
+	vars := mux.Vars(req)
+	dbID := vars["id"]
+
+	//Provide a DB please.
+	if dbID == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprintf(w, "No DB Provided")
+	} else {
+		// If the DB is new create it as an empty json.
+		if dbs[dbID] == "" {
+			dbs[dbID] = "{}"
+			locks[dbID] = &sync.Mutex{}
+		}
+
+		lock := locks[dbID]
+		defer lock.Unlock()
+		lock.Lock()
+		if req.Method == "GET" {
+			fmt.Fprintf(w, dbs[dbID])
+		} else if req.Method == "PUT" {
+			body, err := ioutil.ReadAll(req.Body)
 			if err != nil {
 				w.WriteHeader(http.StatusBadRequest)
 				fmt.Fprintf(w, err.Error())
 			} else {
-				db = result
-				fmt.Fprintf(w, "OK")
+				result, err := applyJSON(dbs[dbID], string(body))
+				if err != nil {
+					w.WriteHeader(http.StatusBadRequest)
+					fmt.Fprintf(w, err.Error())
+				} else {
+					dbs[dbID] = result
+					fmt.Fprintf(w, "OK")
+				}
 			}
-		}
+		} else if req.Method == "DELETE" {
+			var result map[string]interface{}
+			err := json.Unmarshal([]byte(dbs[dbID]), &result)
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				fmt.Fprintf(w, err.Error())
+			}
+			body, err := ioutil.ReadAll(req.Body)
+			entries := strings.Split(string(body), ".")
 
-	} else if req.Method == "DELETE" {
-		var result map[string]interface{}
-		err := json.Unmarshal([]byte(db), &result)
-		if err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			fmt.Fprintf(w, err.Error())
+			result, err = deleteEntry(result, entries)
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				fmt.Fprintf(w, err.Error())
+			} else {
+				outputBytes, err := json.Marshal(result)
+				if err != nil {
+					w.WriteHeader(http.StatusBadRequest)
+					fmt.Fprintf(w, err.Error())
+					return
+				} else {
+					dbs[dbID] = string(outputBytes)
+					fmt.Fprintf(w, "OK")
+				}
+			}
+		} else {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			fmt.Fprintf(w, "Invalid operation")
 		}
-		body, err := ioutil.ReadAll(req.Body)
-		entries := strings.Split(string(body), ".")
-
-		result, err = deleteEntry(result, entries)
-		if err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			fmt.Fprintf(w, err.Error())
-			return
-		}
-
-		outputBytes, err := json.Marshal(result)
-		if err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			fmt.Fprintf(w, err.Error())
-			return
-		}
-
-		db = string(outputBytes)
-		fmt.Fprintf(w, "OK")
-	} else {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		fmt.Fprintf(w, "Invalid operation")
 	}
 }
