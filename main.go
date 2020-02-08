@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -24,13 +25,18 @@ import (
 var dbs map[string]string
 var locks map[string]*sync.Mutex
 var encryptionKey = "CrabsAreCool"
-var dataLocation = "data"
+
+var certFile = flag.String("cert-file", "", "location of cert file")
+var keyFile = flag.String("key-file", "", "location of key file")
+var port = flag.String("port", "8090", "port to host on")
+var dataLocation = flag.String("data-location", "data", "port to host on")
 
 func main() {
 	fmt.Println("CrabDB Started")
 
 	dbs = make(map[string]string)
 	locks = make(map[string]*sync.Mutex)
+	loadConfig()
 	loadDatabases()
 	go bufferWriter()
 
@@ -38,17 +44,29 @@ func main() {
 	r.HandleFunc("/db/{id}", handleDB)
 	r.HandleFunc("/", handleProbe)
 
-	http.ListenAndServe(":8090", r)
+	if *certFile == "" || *keyFile == "" {
+		http.ListenAndServe(":"+*port, r)
+	} else {
+		http.ListenAndServeTLS(":"+*port, *certFile, *keyFile, r)
+	}
+
+}
+
+func loadConfig() {
+	cek, err := ioutil.ReadFile("config/encryptionkey")
+	if err == nil {
+		encryptionKey = string(cek)
+	}
 }
 
 func loadDatabases() {
-	if _, err := os.Stat(dataLocation); os.IsNotExist(err) {
-		err = os.MkdirAll(dataLocation, 0755)
+	if _, err := os.Stat(*dataLocation); os.IsNotExist(err) {
+		err = os.MkdirAll(*dataLocation, 0755)
 		if err != nil {
 			panic(err)
 		}
 	} else {
-		err = filepath.Walk(dataLocation, func(path string, info os.FileInfo, err error) error {
+		err = filepath.Walk(*dataLocation, func(path string, info os.FileInfo, err error) error {
 			fmt.Println("Path", path)
 			dat, err := ioutil.ReadFile(path)
 			if err != nil {
@@ -58,7 +76,7 @@ func loadDatabases() {
 					dat = decrypt([]byte(dat), encryptionKey)
 				}
 
-				dbID := strings.Split(path, dataLocation+"/")[1]
+				dbID := strings.Split(path, *dataLocation+"/")[1]
 				dbs[dbID] = string(dat)
 			}
 			return nil
@@ -76,7 +94,7 @@ func writeDBToFile(dbID string) {
 	if encryptionKey != "" {
 		outputBytes = encrypt(outputBytes, encryptionKey)
 	}
-	err := ioutil.WriteFile(dataLocation+"/"+dbID, outputBytes, 0644)
+	err := ioutil.WriteFile(*dataLocation+"/"+dbID, outputBytes, 0644)
 	if err != nil {
 		fmt.Println(err)
 	}
@@ -208,7 +226,7 @@ func handleDB(w http.ResponseWriter, req *http.Request) {
 				if err != nil {
 					w.WriteHeader(http.StatusBadRequest)
 					fmt.Fprintf(w, err.Error())
-					return
+
 				} else {
 					dbs[dbID] = string(outputBytes)
 					fmt.Fprintf(w, "OK")
