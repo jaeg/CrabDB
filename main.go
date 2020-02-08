@@ -20,6 +20,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"github.com/google/logger"
 )
 
 var dbs map[string]string
@@ -29,7 +30,9 @@ var encryptionKey = "CrabsAreCool"
 var certFile = flag.String("cert-file", "", "location of cert file")
 var keyFile = flag.String("key-file", "", "location of key file")
 var port = flag.String("port", "8090", "port to host on")
-var dataLocation = flag.String("data-location", "data", "port to host on")
+var dataLocation = flag.String("data-location", "data", "Data location")
+var logPath = flag.String("log-path", "./logs.txt", "Logs location")
+
 
 type User struct {
 	Username string
@@ -53,11 +56,20 @@ type Credentials struct {
 
 func main() {
 	flag.Parse()
-	fmt.Println("CrabDB Started")
+	lf, err := os.OpenFile(*logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0660)
+	if err != nil {
+		logger.Fatalf("Failed to open log file: %v", err)
+	}
+	defer lf.Close()
+
+	defer logger.Init("CrabDB", true, true, lf).Close()
+	
+	logger.Info("CrabDB Started")
+
 	sessions = make(map[string]Session)
 	dbs = make(map[string]string)
 	locks = make(map[string]*sync.Mutex)
-	loadConfig()
+	go loadConfig()
 	loadDatabases()
 	go bufferWriter()
 	go sessionGroomer()
@@ -68,8 +80,10 @@ func main() {
 	r.HandleFunc("/auth", handleAuth)
 
 	if *certFile == "" || *keyFile == "" {
+		logger.Info("Starting http")
 		http.ListenAndServe(":"+*port, r)
 	} else {
+		logger.Info("Starting https")
 		http.ListenAndServeTLS(":"+*port, *certFile, *keyFile, r)
 	}
 
@@ -79,7 +93,7 @@ func sessionGroomer() {
 	for {
 		for k, v := range sessions {
 			if time.Since(v.lastUsed).Seconds() > 120 {
-				fmt.Println("Remove session: ", k)
+				logger.Infof("Remove session: %s", k)
 				delete(sessions, k)
 			}
 		}
@@ -99,10 +113,9 @@ func loadConfig() {
 		if err == nil {
 			err := json.Unmarshal([]byte(userJSON), &users)
 			if err != nil {
-				fmt.Println("Failed reading users")
+				logger.Error("Failed reading users")
 			}
 		}
-		fmt.Println(users)
 		time.Sleep(5 * time.Second)
 	}
 
@@ -116,10 +129,9 @@ func loadDatabases() {
 		}
 	} else {
 		err = filepath.Walk(*dataLocation, func(path string, info os.FileInfo, err error) error {
-			fmt.Println("Path", path)
 			dat, err := ioutil.ReadFile(path)
 			if err != nil {
-				fmt.Println("Failed loading file:", err)
+				logger.Errorf("Failed loading file: %s", err)
 			} else {
 				if encryptionKey != "" {
 					dat = decrypt([]byte(dat), encryptionKey)
@@ -145,7 +157,7 @@ func writeDBToFile(dbID string) {
 	}
 	err := ioutil.WriteFile(*dataLocation+"/"+dbID, outputBytes, 0644)
 	if err != nil {
-		fmt.Println(err)
+		logger.Error(err)
 	}
 
 	locks[dbID].Unlock()
