@@ -10,6 +10,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/google/logger"
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	"io"
@@ -20,7 +21,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"github.com/google/logger"
 )
 
 var dbs map[string]string
@@ -32,7 +32,7 @@ var keyFile = flag.String("key-file", "", "location of key file")
 var port = flag.String("port", "8090", "port to host on")
 var dataLocation = flag.String("data-location", "data", "Data location")
 var logPath = flag.String("log-path", "./logs.txt", "Logs location")
-
+var ignoreAuth = true
 
 type User struct {
 	Username string
@@ -63,7 +63,7 @@ func main() {
 	defer lf.Close()
 
 	defer logger.Init("CrabDB", true, true, lf).Close()
-	
+
 	logger.Info("CrabDB Started")
 
 	sessions = make(map[string]Session)
@@ -218,6 +218,10 @@ func deleteEntry(m map[string]interface{}, entries []string) (outMap map[string]
 
 	if len(entries) != 1 {
 		currentEntry := entries[0]
+		if outMap[currentEntry] == nil {
+			outErr = errors.New("not found")
+			return
+		}
 		subMap := outMap[currentEntry].(map[string]interface{})
 		nextEntry := append(entries[:0], entries[0+1:]...)
 		subMap, err := deleteEntry(subMap, nextEntry)
@@ -227,6 +231,24 @@ func deleteEntry(m map[string]interface{}, entries []string) (outMap map[string]
 		delete(outMap, entries[0])
 	}
 	return
+}
+
+func getEntry(m map[string]interface{}, entries []string) (outMap interface{}, outErr error) {
+	if len(entries) == 0 || entries[0] == "" {
+		return nil, errors.New("No entries to process")
+	}
+
+	if len(entries) != 1 {
+		currentEntry := entries[0]
+		if m[currentEntry] == nil {
+			return nil, errors.New("not found")
+		}
+		subMap := m[currentEntry].(map[string]interface{})
+		nextEntry := append(entries[:0], entries[0+1:]...)
+		return getEntry(subMap, nextEntry)
+	}
+
+	return m[entries[0]], nil
 }
 
 func handleProbe(w http.ResponseWriter, req *http.Request) {
@@ -283,7 +305,7 @@ func handleDB(w http.ResponseWriter, req *http.Request) {
 	session := req.Header.Get("session")
 
 	_, ok := sessions[session]
-	if !ok {
+	if !ok && !ignoreAuth {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
@@ -300,7 +322,7 @@ func handleDB(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 
-	if !accessCheck {
+	if !accessCheck && !ignoreAuth {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
@@ -321,7 +343,34 @@ func handleDB(w http.ResponseWriter, req *http.Request) {
 		defer lock.Unlock()
 		lock.Lock()
 		if req.Method == "GET" {
-			fmt.Fprintf(w, dbs[dbID])
+			query, ok := req.URL.Query()["key"]
+			if !ok {
+				fmt.Fprintf(w, dbs[dbID])
+			} else {
+				var result map[string]interface{}
+				err := json.Unmarshal([]byte(dbs[dbID]), &result)
+				if err != nil {
+					w.WriteHeader(http.StatusBadRequest)
+					fmt.Fprintf(w, err.Error())
+				}
+
+				entries := strings.Split(query[0], ".")
+
+				entry, err := getEntry(result, entries)
+				if err != nil {
+					w.WriteHeader(http.StatusBadRequest)
+					fmt.Fprintf(w, err.Error())
+				} else {
+					outputBytes, err := json.Marshal(entry)
+					if err != nil {
+						w.WriteHeader(http.StatusBadRequest)
+						fmt.Fprintf(w, err.Error())
+
+					} else {
+						fmt.Fprintf(w, string(outputBytes))
+					}
+				}
+			}
 		} else if req.Method == "PUT" {
 			body, err := ioutil.ReadAll(req.Body)
 			if err != nil {
