@@ -203,37 +203,33 @@ func applyJSON(o string, i string) (output string, outErr error) {
 	return
 }
 
-func deleteEntry(m map[string]interface{}, entries []string) (outMap map[string]interface{}, outErr error) {
-	outMap = m
-
-	if len(entries) == 0 {
-		outErr = errors.New("No entries to process")
-		return
-	}
-
-	if entries[0] == "" {
-		outErr = errors.New("No entries to process")
-		return
+func deleteEntry(m map[string]interface{}, entries []string) (map[string]interface{}, error) {
+	if len(entries) == 0 || entries[0] == "" {
+		return nil, errors.New("No entries to process")
 	}
 
 	if len(entries) != 1 {
 		currentEntry := entries[0]
-		if outMap[currentEntry] == nil {
-			outErr = errors.New("not found")
-			return
+		if m[currentEntry] == nil {
+			return nil, errors.New("not found")
 		}
-		subMap := outMap[currentEntry].(map[string]interface{})
+		subMap := m[currentEntry].(map[string]interface{})
 		nextEntry := append(entries[:0], entries[0+1:]...)
 		subMap, err := deleteEntry(subMap, nextEntry)
-		outErr = err
-		outMap[currentEntry] = subMap
+
+		if err != nil {
+			return nil, err
+		}
+
+		m[currentEntry] = subMap
 	} else {
-		delete(outMap, entries[0])
+		delete(m, entries[0])
 	}
-	return
+
+	return m, nil
 }
 
-func getEntry(m map[string]interface{}, entries []string) (outMap interface{}, outErr error) {
+func getEntry(m map[string]interface{}, entries []string) (interface{}, error) {
 	if len(entries) == 0 || entries[0] == "" {
 		return nil, errors.New("No entries to process")
 	}
