@@ -32,7 +32,7 @@ var keyFile = flag.String("key-file", "", "location of key file")
 var port = flag.String("port", "8090", "port to host on")
 var dataLocation = flag.String("data-location", "data", "Data location")
 var logPath = flag.String("log-path", "./logs.txt", "Logs location")
-var ignoreAuth = true
+var ignoreAuth = flag.Bool("no-auth", false, "No auth enabled")
 
 type User struct {
 	Username string
@@ -301,7 +301,7 @@ func handleDB(w http.ResponseWriter, req *http.Request) {
 	session := req.Header.Get("session")
 
 	_, ok := sessions[session]
-	if !ok && !ignoreAuth {
+	if !ok && !*ignoreAuth {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
@@ -318,7 +318,7 @@ func handleDB(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 
-	if !accessCheck && !ignoreAuth {
+	if !accessCheck && !*ignoreAuth {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
