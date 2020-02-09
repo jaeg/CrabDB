@@ -1,19 +1,9 @@
 package main
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/md5"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
-	"github.com/google/logger"
-	"github.com/google/uuid"
-	"github.com/gorilla/mux"
-	"io"
 	"io/ioutil"
 	"net/http"
 	"os"
@@ -21,9 +11,13 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/google/logger"
+	"github.com/google/uuid"
+	"github.com/gorilla/mux"
 )
 
-var dbs map[string]string
+var dbs map[string]*DB
 var locks map[string]*sync.Mutex
 var encryptionKey = "CrabsAreCool"
 
@@ -67,7 +61,7 @@ func main() {
 	logger.Info("CrabDB Started")
 
 	sessions = make(map[string]Session)
-	dbs = make(map[string]string)
+	dbs = make(map[string]*DB)
 	locks = make(map[string]*sync.Mutex)
 	go loadConfig()
 	loadDatabases()
@@ -129,17 +123,13 @@ func loadDatabases() {
 		}
 	} else {
 		err = filepath.Walk(*dataLocation, func(path string, info os.FileInfo, err error) error {
-			dat, err := ioutil.ReadFile(path)
-			if err != nil {
-				logger.Errorf("Failed loading file: %s", err)
-			} else {
-				if encryptionKey != "" {
-					dat = decrypt([]byte(dat), encryptionKey)
-				}
-
+			if len(strings.Split(path, *dataLocation+"/")) > 1 {
 				dbID := strings.Split(path, *dataLocation+"/")[1]
-				dbs[dbID] = string(dat)
+				dbs[dbID] = LoadDB(path, encryptionKey)
 			}
+			
+
+			//This is for the inner function
 			return nil
 		})
 
@@ -151,15 +141,7 @@ func loadDatabases() {
 
 func writeDBToFile(dbID string) {
 	locks[dbID].Lock()
-	outputBytes := []byte(dbs[dbID])
-	if encryptionKey != "" {
-		outputBytes = encrypt(outputBytes, encryptionKey)
-	}
-	err := ioutil.WriteFile(*dataLocation+"/"+dbID, outputBytes, 0644)
-	if err != nil {
-		logger.Error(err)
-	}
-
+	dbs[dbID].Save(*dataLocation+"/"+dbID, encryptionKey)
 	locks[dbID].Unlock()
 }
 
@@ -171,80 +153,6 @@ func bufferWriter() {
 		}
 		time.Sleep(5 * time.Second)
 	}
-}
-
-func applyJSON(o string, i string) (output string, outErr error) {
-	var result map[string]interface{}
-	err := json.Unmarshal([]byte(o), &result)
-	if err != nil {
-		outErr = errors.New("Invalid original json")
-		return
-	}
-
-	var input map[string]interface{}
-	err = json.Unmarshal([]byte(i), &input)
-	if err != nil {
-		outErr = errors.New("Invalid input json")
-		return
-	}
-
-	for k, v := range input {
-		result[k] = v
-	}
-
-	outputBytes, err := json.Marshal(result)
-	if err != nil {
-		outErr = errors.New("Resulting JSON failed to marshal")
-		return
-	}
-
-	output = string(outputBytes)
-
-	return
-}
-
-func deleteEntry(m map[string]interface{}, entries []string) (map[string]interface{}, error) {
-	if len(entries) == 0 || entries[0] == "" {
-		return nil, errors.New("No entries to process")
-	}
-
-	if len(entries) != 1 {
-		currentEntry := entries[0]
-		if m[currentEntry] == nil {
-			return nil, errors.New("not found")
-		}
-		subMap := m[currentEntry].(map[string]interface{})
-		nextEntry := append(entries[:0], entries[0+1:]...)
-		subMap, err := deleteEntry(subMap, nextEntry)
-
-		if err != nil {
-			return nil, err
-		}
-
-		m[currentEntry] = subMap
-	} else {
-		delete(m, entries[0])
-	}
-
-	return m, nil
-}
-
-func getEntry(m map[string]interface{}, entries []string) (interface{}, error) {
-	if len(entries) == 0 || entries[0] == "" {
-		return nil, errors.New("No entries to process")
-	}
-
-	if len(entries) != 1 {
-		currentEntry := entries[0]
-		if m[currentEntry] == nil {
-			return nil, errors.New("not found")
-		}
-		subMap := m[currentEntry].(map[string]interface{})
-		nextEntry := append(entries[:0], entries[0+1:]...)
-		return getEntry(subMap, nextEntry)
-	}
-
-	return m[entries[0]], nil
 }
 
 func handleProbe(w http.ResponseWriter, req *http.Request) {
@@ -330,8 +238,8 @@ func handleDB(w http.ResponseWriter, req *http.Request) {
 	} else {
 
 		// If the DB is new create it as an empty json.
-		if dbs[dbID] == "" {
-			dbs[dbID] = "{}"
+		if dbs[dbID] == nil {
+			dbs[dbID] = NewDB()
 			locks[dbID] = &sync.Mutex{}
 		}
 
@@ -341,30 +249,14 @@ func handleDB(w http.ResponseWriter, req *http.Request) {
 		if req.Method == "GET" {
 			query, ok := req.URL.Query()["key"]
 			if !ok {
-				fmt.Fprintf(w, dbs[dbID])
+				fmt.Fprintf(w, dbs[dbID].Raw)
 			} else {
-				var result map[string]interface{}
-				err := json.Unmarshal([]byte(dbs[dbID]), &result)
-				if err != nil {
-					w.WriteHeader(http.StatusBadRequest)
-					fmt.Fprintf(w, err.Error())
-				}
-
-				entries := strings.Split(query[0], ".")
-
-				entry, err := getEntry(result, entries)
+				result, err := dbs[dbID].Get(query[0])
 				if err != nil {
 					w.WriteHeader(http.StatusBadRequest)
 					fmt.Fprintf(w, err.Error())
 				} else {
-					outputBytes, err := json.Marshal(entry)
-					if err != nil {
-						w.WriteHeader(http.StatusBadRequest)
-						fmt.Fprintf(w, err.Error())
-
-					} else {
-						fmt.Fprintf(w, string(outputBytes))
-					}
+					fmt.Fprintf(w, result)
 				}
 			}
 		} else if req.Method == "PUT" {
@@ -373,83 +265,33 @@ func handleDB(w http.ResponseWriter, req *http.Request) {
 				w.WriteHeader(http.StatusBadRequest)
 				fmt.Fprintf(w, err.Error())
 			} else {
-				result, err := applyJSON(dbs[dbID], string(body))
+				err := dbs[dbID].Set(string(body))
 				if err != nil {
 					w.WriteHeader(http.StatusBadRequest)
 					fmt.Fprintf(w, err.Error())
 				} else {
-					dbs[dbID] = result
 					fmt.Fprintf(w, "OK")
 				}
 			}
 		} else if req.Method == "DELETE" {
-			var result map[string]interface{}
-			err := json.Unmarshal([]byte(dbs[dbID]), &result)
+			body, err := ioutil.ReadAll(req.Body)
+
 			if err != nil {
 				w.WriteHeader(http.StatusBadRequest)
 				fmt.Fprintf(w, err.Error())
+				return
 			}
-			body, err := ioutil.ReadAll(req.Body)
-			entries := strings.Split(string(body), ".")
 
-			result, err = deleteEntry(result, entries)
+			err = dbs[dbID].Delete(string(body))
 			if err != nil {
 				w.WriteHeader(http.StatusBadRequest)
 				fmt.Fprintf(w, err.Error())
 			} else {
-				outputBytes, err := json.Marshal(result)
-				if err != nil {
-					w.WriteHeader(http.StatusBadRequest)
-					fmt.Fprintf(w, err.Error())
-
-				} else {
-					dbs[dbID] = string(outputBytes)
-					fmt.Fprintf(w, "OK")
-				}
+				fmt.Fprintf(w, "OK")
 			}
 		} else {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			fmt.Fprintf(w, "Invalid operation")
 		}
 	}
-}
-
-// Got these from: https://www.thepolyglotdeveloper.com/2018/02/encrypt-decrypt-data-golang-application-crypto-packages/
-func encrypt(data []byte, passphrase string) []byte {
-	block, _ := aes.NewCipher([]byte(createHash(passphrase)))
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		panic(err.Error())
-	}
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err = io.ReadFull(rand.Reader, nonce); err != nil {
-		panic(err.Error())
-	}
-	ciphertext := gcm.Seal(nonce, nonce, data, nil)
-	return ciphertext
-}
-
-func decrypt(data []byte, passphrase string) []byte {
-	key := []byte(createHash(passphrase))
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		panic(err.Error())
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		panic(err.Error())
-	}
-	nonceSize := gcm.NonceSize()
-	nonce, ciphertext := data[:nonceSize], data[nonceSize:]
-	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
-	if err != nil {
-		panic(err.Error())
-	}
-	return plaintext
-}
-
-func createHash(key string) string {
-	hasher := md5.New()
-	hasher.Write([]byte(key))
-	return hex.EncodeToString(hasher.Sum(nil))
 }
