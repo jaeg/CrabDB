@@ -127,7 +127,6 @@ func loadDatabases() {
 				dbID := strings.Split(path, *dataLocation+"/")[1]
 				dbs[dbID] = LoadDB(path, encryptionKey)
 			}
-			
 
 			//This is for the inner function
 			return nil
