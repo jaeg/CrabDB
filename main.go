@@ -64,7 +64,7 @@ func main() {
 
 	logger.Info("CrabDB Started")
 
-	ldbs := PlayLogs("logfile.txt")
+	ldbs := PlayLogs(*logLocation + "/logfile.txt")
 	logger.Info(ldbs)
 
 	sessions = make(map[string]Session)
@@ -76,13 +76,13 @@ func main() {
 	go sessionGroomer()
 
 	//Verify DB with playback
-	for k, v := range ldbs {
-		if dbs[k] == nil {
-			logger.Error("DB missing")
+	for k, v := range dbs {
+		if ldbs[k] == nil {
+			logger.Error("DB missing from logs: ", k)
 			return
 		}
 
-		if v.Raw != dbs[k].Raw {
+		if v.Raw != ldbs[k].Raw {
 			logger.Error("Data mismatch")
 			return
 		}

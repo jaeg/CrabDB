@@ -75,6 +75,10 @@ func PlayLogs(path string) map[string]*DB {
 
 	for scanner.Scan() {
 		logRaw := scanner.Text()
+		if encryptionKey != "" {
+			dat := decrypt([]byte(logRaw), encryptionKey)
+			logRaw = string(dat)
+		}
 		var logM LogMessage
 		err := json.Unmarshal([]byte(logRaw), &logM)
 		if err != nil {
@@ -182,6 +186,10 @@ func (c *DB) log(operation string, input string) {
 		if err != nil {
 			logger.Error(err)
 			return
+		}
+
+		if encryptionKey != "" {
+			outputBytes = encrypt(outputBytes, encryptionKey)
 		}
 
 		_, err = logFile.WriteString(string(outputBytes) + "\n")
