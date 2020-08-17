@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/md5"
@@ -10,23 +11,42 @@ import (
 	"errors"
 	"io"
 	"io/ioutil"
+	"log"
+	"os"
 	"strings"
 
 	"github.com/google/logger"
 )
 
+//DB represents the database
 type DB struct {
-	Raw string
+	ID             string
+	Raw            string
+	Logs           []LogMessage
+	CurrentLogFile *os.File
+	LogPlayback    bool
 }
 
-func NewDB() *DB {
+//LogMessage represents a database operation.
+type LogMessage struct {
+	Operation string
+	Input     string
+	DBID      string
+}
+
+//NewDB creates a new instance of the database
+func NewDB(dbID string) *DB {
 	db := &DB{}
 	db.Raw = "{}"
+	db.ID = dbID
+	log.Print(dbID)
+
 	return db
 }
 
-func LoadDB(path string, encryptionKey string) *DB {
-	db := &DB{}
+//LoadDB Loads a database from a file using an encryptionKey
+func LoadDB(path string, encryptionKey string, id string) *DB {
+	db := &DB{ID: id}
 	dat, err := ioutil.ReadFile(path)
 	if err != nil {
 		logger.Errorf("Failed loading file: %s", err)
@@ -39,18 +59,60 @@ func LoadDB(path string, encryptionKey string) *DB {
 	return db
 }
 
-func (this *DB) Set(input string) error {
-	result, err := applyJSON(this.Raw, input)
+//PlayLogs plays back a log file and returns the resulting db
+func PlayLogs(path string) map[string]*DB {
+	logsFile, err := os.Open(path)
+	if err != nil {
+		logger.Errorf("Failed loading file: %s", err)
+		return nil
+	}
+	defer logsFile.Close()
+
+	ldbs := make(map[string]*DB)
+
+	scanner := bufio.NewScanner(logsFile)
+	scanner.Split(bufio.ScanLines)
+
+	for scanner.Scan() {
+		logRaw := scanner.Text()
+		var logM LogMessage
+		err := json.Unmarshal([]byte(logRaw), &logM)
+		if err != nil {
+			logger.Error(err)
+			return nil
+		}
+
+		if ldbs[logM.DBID] == nil {
+			ldbs[logM.DBID] = NewDB(logM.DBID)
+			ldbs[logM.DBID].LogPlayback = true
+		}
+
+		switch logM.Operation {
+		case "set":
+			ldbs[logM.DBID].Set(logM.Input)
+		case "delete":
+			ldbs[logM.DBID].Delete(logM.Input)
+		}
+
+	}
+	return ldbs
+}
+
+//Set sets the input in the database
+func (c *DB) Set(input string) error {
+	c.log("set", input)
+	result, err := applyJSON(c.Raw, input)
 	if err != nil {
 		return err
 	}
-	this.Raw = result
+	c.Raw = result
 	return nil
 }
 
-func (this *DB) Get(query string) (string, error) {
+//Get Gets the query's value from the database
+func (c *DB) Get(query string) (string, error) {
 	var result map[string]interface{}
-	err := json.Unmarshal([]byte(this.Raw), &result)
+	err := json.Unmarshal([]byte(c.Raw), &result)
 	if err != nil {
 		return "", err
 	}
@@ -60,19 +122,20 @@ func (this *DB) Get(query string) (string, error) {
 	entry, err := getEntry(result, entries)
 	if err != nil {
 		return "", err
-	} else {
-		outputBytes, err := json.Marshal(entry)
-		if err != nil {
-			return "", err
-		} else {
-			return string(outputBytes), nil
-		}
 	}
+	outputBytes, err := json.Marshal(entry)
+	if err != nil {
+		return "", err
+	}
+	return string(outputBytes), nil
+
 }
 
-func (this *DB) Delete(key string) error {
+//Delete deletes the entry in the database
+func (c *DB) Delete(key string) error {
+	c.log("delete", key)
 	var result map[string]interface{}
-	err := json.Unmarshal([]byte(this.Raw), &result)
+	err := json.Unmarshal([]byte(c.Raw), &result)
 	if err != nil {
 		return err
 	}
@@ -89,18 +152,44 @@ func (this *DB) Delete(key string) error {
 		return err
 	}
 
-	this.Raw = string(outputBytes)
+	c.Raw = string(outputBytes)
 	return nil
 }
 
-func (this *DB) Save(path string, encryptionKey string) {
-	outputBytes := []byte(this.Raw)
+//Save saves the database with the given encryption key
+func (c *DB) Save(path string, encryptionKey string) {
+	outputBytes := []byte(c.Raw)
 	if encryptionKey != "" {
 		outputBytes = encrypt(outputBytes, encryptionKey)
 	}
 	err := ioutil.WriteFile(path, outputBytes, 0644)
 	if err != nil {
 		logger.Error(err)
+	}
+}
+
+func (c *DB) log(operation string, input string) {
+	if !c.LogPlayback {
+		log.Print("Logging message")
+		logFile, err := os.OpenFile(*logLocation+"/logfile.txt", os.O_RDWR|os.O_APPEND|os.O_CREATE, 0755)
+		if err != nil {
+			panic(err)
+		}
+
+		newLog := LogMessage{Operation: operation, Input: input, DBID: c.ID}
+		c.Logs = append(c.Logs, newLog)
+		outputBytes, err := json.Marshal(newLog)
+		if err != nil {
+			logger.Error(err)
+			return
+		}
+
+		_, err = logFile.WriteString(string(outputBytes) + "\n")
+		if err != nil {
+			logger.Error(err)
+		}
+
+		defer logFile.Close()
 	}
 }
 

@@ -25,9 +25,11 @@ var certFile = flag.String("cert-file", "", "location of cert file")
 var keyFile = flag.String("key-file", "", "location of key file")
 var port = flag.String("port", "8090", "port to host on")
 var dataLocation = flag.String("data-location", "data", "Data location")
+var logLocation = flag.String("log-location", "logs", "Logs location")
 var logPath = flag.String("log-path", "./logs.txt", "Logs location")
 var ignoreAuth = flag.Bool("no-auth", false, "No auth enabled")
 
+//User represents a user of the database.
 type User struct {
 	Username string
 	Password string
@@ -36,6 +38,7 @@ type User struct {
 
 var users = map[string]User{}
 
+//Session represents a user's session after login
 type Session struct {
 	lastUsed time.Time
 	userName string
@@ -43,6 +46,7 @@ type Session struct {
 
 var sessions map[string]Session
 
+//Credentials represents a set of credentials for a login request.
 type Credentials struct {
 	Password string `json:"password"`
 	Username string `json:"username"`
@@ -60,6 +64,9 @@ func main() {
 
 	logger.Info("CrabDB Started")
 
+	ldbs := PlayLogs("logfile.txt")
+	logger.Info(ldbs)
+
 	sessions = make(map[string]Session)
 	dbs = make(map[string]*DB)
 	locks = make(map[string]*sync.Mutex)
@@ -67,6 +74,19 @@ func main() {
 	loadDatabases()
 	go bufferWriter()
 	go sessionGroomer()
+
+	//Verify DB with playback
+	for k, v := range ldbs {
+		if dbs[k] == nil {
+			logger.Error("DB missing")
+			return
+		}
+
+		if v.Raw != dbs[k].Raw {
+			logger.Error("Data mismatch")
+			return
+		}
+	}
 
 	r := mux.NewRouter()
 	r.HandleFunc("/db/{id}", handleDB)
@@ -96,6 +116,13 @@ func sessionGroomer() {
 }
 
 func loadConfig() {
+	if _, err := os.Stat(*logLocation); os.IsNotExist(err) {
+		err = os.MkdirAll(*logLocation, 0755)
+		if err != nil {
+			panic(err)
+		}
+	}
+
 	for {
 		cek, err := ioutil.ReadFile("config/encryptionkey")
 		if err == nil {
@@ -125,7 +152,7 @@ func loadDatabases() {
 		err = filepath.Walk(*dataLocation, func(path string, info os.FileInfo, err error) error {
 			if len(strings.Split(path, *dataLocation+"/")) > 1 {
 				dbID := strings.Split(path, *dataLocation+"/")[1]
-				dbs[dbID] = LoadDB(path, encryptionKey)
+				dbs[dbID] = LoadDB(path, encryptionKey, dbID)
 			}
 
 			//This is for the inner function
@@ -238,7 +265,7 @@ func handleDB(w http.ResponseWriter, req *http.Request) {
 
 		// If the DB is new create it as an empty json.
 		if dbs[dbID] == nil {
-			dbs[dbID] = NewDB()
+			dbs[dbID] = NewDB(dbID)
 			locks[dbID] = &sync.Mutex{}
 		}
 
