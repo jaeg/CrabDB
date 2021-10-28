@@ -2,6 +2,6 @@ FROM scratch
 ARG binary
 ARG version
 ENV version=$version
-ADD pkg/$binary /app
+ADD bin/$binary /app
 
 ENTRYPOINT ["/app"]
