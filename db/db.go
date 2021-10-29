@@ -1,4 +1,4 @@
-package main
+package db
 
 import (
 	"bufio"
@@ -9,14 +9,17 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/ioutil"
-	"log"
 	"os"
 	"strings"
 
 	"github.com/google/logger"
 )
+
+var EncryptionKey string
+var LogLocation string
 
 //DB represents the database
 type DB struct {
@@ -39,7 +42,7 @@ func NewDB(dbID string) *DB {
 	db := &DB{}
 	db.Raw = "{}"
 	db.ID = dbID
-	log.Print(dbID)
+	logger.Info("New db created : ", dbID)
 
 	return db
 }
@@ -61,6 +64,7 @@ func LoadDB(path string, encryptionKey string, id string) *DB {
 
 //PlayLogs plays back a log file and returns the resulting db
 func PlayLogs(path string) map[string]*DB {
+	fmt.Println("test", EncryptionKey)
 	logsFile, err := os.Open(path)
 	if err != nil {
 		logger.Errorf("Failed loading file: %s", err)
@@ -75,8 +79,8 @@ func PlayLogs(path string) map[string]*DB {
 
 	for scanner.Scan() {
 		logRaw := scanner.Text()
-		if encryptionKey != "" {
-			dat := decrypt([]byte(logRaw), encryptionKey)
+		if EncryptionKey != "" {
+			dat := decrypt([]byte(logRaw), EncryptionKey)
 			logRaw = string(dat)
 		}
 		var logM LogMessage
@@ -174,8 +178,8 @@ func (c *DB) Save(path string, encryptionKey string) {
 
 func (c *DB) log(operation string, input string) {
 	if !c.LogPlayback {
-		log.Print("Logging message")
-		logFile, err := os.OpenFile(*logLocation+"/logfile.txt", os.O_RDWR|os.O_APPEND|os.O_CREATE, 0755)
+		logger.Info("Logging message")
+		logFile, err := os.OpenFile(LogLocation+"/logfile.txt", os.O_RDWR|os.O_APPEND|os.O_CREATE, 0755)
 		if err != nil {
 			panic(err)
 		}
@@ -188,8 +192,8 @@ func (c *DB) log(operation string, input string) {
 			return
 		}
 
-		if encryptionKey != "" {
-			outputBytes = encrypt(outputBytes, encryptionKey)
+		if EncryptionKey != "" {
+			outputBytes = encrypt(outputBytes, EncryptionKey)
 		}
 
 		_, err = logFile.WriteString(string(outputBytes) + "\n")
@@ -245,14 +249,14 @@ func applyJSON(o string, i string) (output string, outErr error) {
 	var result map[string]interface{}
 	err := json.Unmarshal([]byte(o), &result)
 	if err != nil {
-		outErr = errors.New("Invalid original json")
+		outErr = errors.New("invalid original json")
 		return
 	}
 
 	var input map[string]interface{}
 	err = json.Unmarshal([]byte(i), &input)
 	if err != nil {
-		outErr = errors.New("Invalid input json")
+		outErr = errors.New("invalid input json")
 		return
 	}
 
@@ -262,7 +266,7 @@ func applyJSON(o string, i string) (output string, outErr error) {
 
 	outputBytes, err := json.Marshal(result)
 	if err != nil {
-		outErr = errors.New("Resulting JSON failed to marshal")
+		outErr = errors.New("resulting JSON failed to marshal")
 		return
 	}
 
@@ -273,7 +277,7 @@ func applyJSON(o string, i string) (output string, outErr error) {
 
 func deleteEntry(m map[string]interface{}, entries []string) (map[string]interface{}, error) {
 	if len(entries) == 0 || entries[0] == "" {
-		return nil, errors.New("No entries to process")
+		return nil, errors.New("no entries to process")
 	}
 
 	if len(entries) != 1 {
@@ -299,7 +303,7 @@ func deleteEntry(m map[string]interface{}, entries []string) (map[string]interfa
 
 func getEntry(m map[string]interface{}, entries []string) (interface{}, error) {
 	if len(entries) == 0 || entries[0] == "" {
-		return nil, errors.New("No entries to process")
+		return nil, errors.New("no entries to process")
 	}
 
 	if len(entries) != 1 {

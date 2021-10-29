@@ -1,4 +1,4 @@
-package main
+package db
 
 import (
 	"testing"
@@ -29,7 +29,7 @@ func TestApplyJSONValidInputAndInvalidOriginal(t *testing.T) {
 	if err == nil {
 		t.Errorf("Expected error and didn't get one")
 	} else {
-		if err.Error() != "Invalid original json" {
+		if err.Error() != "invalid original json" {
 			t.Errorf("Failed to throw correct error")
 		}
 	}
@@ -44,7 +44,7 @@ func TestApplyJSONVInvalidInputAndValidOriginal(t *testing.T) {
 	if err == nil {
 		t.Errorf("Expected error and didn't get one")
 	} else {
-		if err.Error() != "Invalid input json" {
+		if err.Error() != "invalid input json" {
 			t.Errorf("Failed to throw correct error")
 		}
 	}

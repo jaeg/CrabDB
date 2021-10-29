@@ -15,11 +15,11 @@ import (
 	"github.com/google/logger"
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
+	"github.com/jaeg/CrabDB/db"
 )
 
-var dbs map[string]*DB
+var dbs map[string]*db.DB
 var locks map[string]*sync.Mutex
-var encryptionKey = "CrabsAreCool"
 
 var certFile = flag.String("cert-file", "", "location of cert file")
 var keyFile = flag.String("key-file", "", "location of key file")
@@ -63,15 +63,17 @@ func main() {
 	defer logger.Init("CrabDB", true, true, lf).Close()
 
 	logger.Info("CrabDB Started")
-
-	ldbs := PlayLogs(*logLocation + "/logfile.txt")
-	logger.Info(ldbs)
+	db.LogLocation = *logLocation
 
 	sessions = make(map[string]Session)
-	dbs = make(map[string]*DB)
+	dbs = make(map[string]*db.DB)
 	locks = make(map[string]*sync.Mutex)
-	go loadConfig()
+	loadConfig()
+
+	ldbs := db.PlayLogs(*logLocation + "/logfile.txt")
 	loadDatabases()
+
+	go configWatcher()
 	go bufferWriter()
 	go sessionGroomer()
 
@@ -103,6 +105,7 @@ func main() {
 
 }
 
+//Grooms the active sessions using the DB
 func sessionGroomer() {
 	for {
 		for k, v := range sessions {
@@ -123,20 +126,33 @@ func loadConfig() {
 		}
 	}
 
+	cek, err := ioutil.ReadFile("config/encryptionkey")
+	if err == nil {
+		db.EncryptionKey = string(cek)
+	}
+
+	userJSON, err := ioutil.ReadFile("config/users.json")
+
+	if err == nil {
+		err := json.Unmarshal([]byte(userJSON), &users)
+		if err != nil {
+			logger.Error("Failed reading users")
+		}
+	}
+
+}
+
+// Watches the configuration file and reloads as necessary.
+func configWatcher() {
+	if _, err := os.Stat(*logLocation); os.IsNotExist(err) {
+		err = os.MkdirAll(*logLocation, 0755)
+		if err != nil {
+			panic(err)
+		}
+	}
+
 	for {
-		cek, err := ioutil.ReadFile("config/encryptionkey")
-		if err == nil {
-			encryptionKey = string(cek)
-		}
-
-		userJSON, err := ioutil.ReadFile("config/users.json")
-
-		if err == nil {
-			err := json.Unmarshal([]byte(userJSON), &users)
-			if err != nil {
-				logger.Error("Failed reading users")
-			}
-		}
+		loadConfig()
 		time.Sleep(5 * time.Second)
 	}
 
@@ -152,12 +168,16 @@ func loadDatabases() {
 		err = filepath.Walk(*dataLocation, func(path string, info os.FileInfo, err error) error {
 			if len(strings.Split(path, *dataLocation+"/")) > 1 {
 				dbID := strings.Split(path, *dataLocation+"/")[1]
-				dbs[dbID] = LoadDB(path, encryptionKey, dbID)
+				dbs[dbID] = db.LoadDB(path, db.EncryptionKey, dbID)
 			}
 
 			//This is for the inner function
 			return nil
 		})
+
+		if err != nil {
+			panic(err)
+		}
 
 		for k := range dbs {
 			locks[k] = &sync.Mutex{}
@@ -167,7 +187,7 @@ func loadDatabases() {
 
 func writeDBToFile(dbID string) {
 	locks[dbID].Lock()
-	dbs[dbID].Save(*dataLocation+"/"+dbID, encryptionKey)
+	dbs[dbID].Save(*dataLocation+"/"+dbID, db.EncryptionKey)
 	locks[dbID].Unlock()
 }
 
@@ -265,7 +285,7 @@ func handleDB(w http.ResponseWriter, req *http.Request) {
 
 		// If the DB is new create it as an empty json.
 		if dbs[dbID] == nil {
-			dbs[dbID] = NewDB(dbID)
+			dbs[dbID] = db.NewDB(dbID)
 			locks[dbID] = &sync.Mutex{}
 		}
 
@@ -280,21 +300,21 @@ func handleDB(w http.ResponseWriter, req *http.Request) {
 				result, err := dbs[dbID].Get(query[0])
 				if err != nil {
 					w.WriteHeader(http.StatusBadRequest)
-					fmt.Fprintf(w, err.Error())
+					fmt.Fprint(w, err.Error())
 				} else {
-					fmt.Fprintf(w, result)
+					fmt.Fprint(w, result)
 				}
 			}
 		} else if req.Method == "PUT" {
 			body, err := ioutil.ReadAll(req.Body)
 			if err != nil {
 				w.WriteHeader(http.StatusBadRequest)
-				fmt.Fprintf(w, err.Error())
+				fmt.Fprint(w, err.Error())
 			} else {
 				err := dbs[dbID].Set(string(body))
 				if err != nil {
 					w.WriteHeader(http.StatusBadRequest)
-					fmt.Fprintf(w, err.Error())
+					fmt.Fprint(w, err.Error())
 				} else {
 					fmt.Fprintf(w, "OK")
 				}
@@ -304,14 +324,14 @@ func handleDB(w http.ResponseWriter, req *http.Request) {
 
 			if err != nil {
 				w.WriteHeader(http.StatusBadRequest)
-				fmt.Fprintf(w, err.Error())
+				fmt.Fprint(w, err.Error())
 				return
 			}
 
 			err = dbs[dbID].Delete(string(body))
 			if err != nil {
 				w.WriteHeader(http.StatusBadRequest)
-				fmt.Fprintf(w, err.Error())
+				fmt.Fprint(w, err.Error())
 			} else {
 				fmt.Fprintf(w, "OK")
 			}
