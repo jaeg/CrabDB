@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -41,15 +42,19 @@ func NewBasicAuthMiddleware() (*BasicAuthMiddleware, error) {
 	if len(userDB.Raw) == 0 {
 		userDB = db.NewDB("users")
 		logger.Info("User database not setup, initializing")
-		userJSONBytes, err := ioutil.ReadFile(userConfigPath)
-		if err != nil {
-			return nil, err
-		}
+		if _, err := os.Stat(userConfigPath); os.IsNotExist(err) {
+			logger.Error("No initial user config present")
+		} else {
+			userJSONBytes, err := ioutil.ReadFile(userConfigPath)
+			if err != nil {
+				return nil, err
+			}
 
-		userJSON := string(userJSONBytes)
-		err = userDB.Set(userJSON)
-		if err != nil {
-			logger.Errorf("Error applying user json %s", err.Error())
+			userJSON := string(userJSONBytes)
+			err = userDB.Set(userJSON)
+			if err != nil {
+				logger.Errorf("Error applying user json %s", err.Error())
+			}
 		}
 
 		userDB.Save(userDBDPath, db.EncryptionKey)
