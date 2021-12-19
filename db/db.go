@@ -28,8 +28,6 @@ func NewDB(dbID string) *DB {
 	db := &DB{}
 	db.Raw = "{}"
 	db.ID = dbID
-	logger.Info("New db created : ", dbID)
-
 	return db
 }
 
@@ -41,7 +39,11 @@ func LoadDB(path string, encryptionKey string, id string) *DB {
 		logger.Errorf("Failed loading file: %s", err)
 	} else {
 		if encryptionKey != "" {
-			dat = crypt.Decrypt([]byte(dat), encryptionKey)
+			dat, err = crypt.Decrypt([]byte(dat), encryptionKey)
+			if err != nil {
+				logger.Error("Error decrypting database")
+				panic(err)
+			}
 		}
 		db.Raw = string(dat)
 	}
@@ -116,10 +118,15 @@ func (c *DB) Delete(key string) error {
 //Save saves the database with the given encryption key
 func (c *DB) Save(path string, encryptionKey string) {
 	outputBytes := []byte(c.Raw)
+	var err error
 	if encryptionKey != "" {
-		outputBytes = crypt.Encrypt(outputBytes, encryptionKey)
+		outputBytes, err = crypt.Encrypt(outputBytes, encryptionKey)
+		if err != nil {
+			logger.Error("Error encrypting database")
+			panic(err)
+		}
 	}
-	err := ioutil.WriteFile(path, outputBytes, 0644)
+	err = ioutil.WriteFile(path, outputBytes, 0644)
 	if err != nil {
 		logger.Error(err)
 	}

@@ -44,7 +44,7 @@ func main() {
 
 	dbs = make(map[string]*db.DB)
 	locks = make(map[string]*sync.Mutex)
-	auth.Init()
+	auth.UseMiddleware(auth.NewBasicAuthMiddleware())
 	loadConfig()
 
 	ldbs := journalplayback.PlayLogs(*logLocation + "/logfile.txt")
@@ -67,7 +67,7 @@ func main() {
 	}
 
 	r := mux.NewRouter()
-	r.HandleFunc("/db/{id}", auth.BasicAuth(handleDB))
+	r.HandleFunc("/db/{id}", auth.Auth(handleDB))
 	r.HandleFunc("/", handleProbe)
 	r.HandleFunc("/auth", auth.HandleAuth)
 
