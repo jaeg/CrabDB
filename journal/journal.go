@@ -17,7 +17,6 @@ type LogMessage struct {
 }
 
 func Log(operation string, input string, dbId string) {
-	logger.Info("Logging message")
 	logFile, err := os.OpenFile(LogLocation+"/logfile.txt", os.O_RDWR|os.O_APPEND|os.O_CREATE, 0755)
 	if err != nil {
 		panic(err)

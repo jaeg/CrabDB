@@ -88,11 +88,7 @@ func (b *BasicAuthMiddleware) HandleAuth(w http.ResponseWriter, r *http.Request)
 			return
 		}
 
-		http.SetCookie(w, &http.Cookie{
-			Name:    "session_token",
-			Value:   token,
-			Expires: time.Now().Add(120 * time.Second),
-		})
+		w.Header().Set("token", "Bearer "+token)
 
 	} else {
 		w.WriteHeader(http.StatusMethodNotAllowed)
