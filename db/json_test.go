@@ -4,7 +4,7 @@ import (
 	"testing"
 )
 
-func TestApplyJSONValidInputAndOriginal(t *testing.T) {
+func Test_Apply_JSON_Valid_Input_And_Original(t *testing.T) {
 	input := "{\"test\":0}"
 	original := "{\"test\":1}"
 	expected := "{\"test\":0}"
@@ -21,7 +21,7 @@ func TestApplyJSONValidInputAndOriginal(t *testing.T) {
 
 }
 
-func TestApplyJSONValidInputAndInvalidOriginal(t *testing.T) {
+func Test_Apply_JSON_Valid_Input_And_Invalid_Original(t *testing.T) {
 	input := "{\"test\":0}"
 	original := "{\"test:1}"
 
@@ -36,7 +36,7 @@ func TestApplyJSONValidInputAndInvalidOriginal(t *testing.T) {
 
 }
 
-func TestApplyJSONVInvalidInputAndValidOriginal(t *testing.T) {
+func Test_Apply_JSON_Invalid_Input_And_Valid_Original(t *testing.T) {
 	input := "{\"test:0}"
 	original := "{\"test\":1}"
 
