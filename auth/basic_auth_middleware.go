@@ -43,7 +43,7 @@ func NewBasicAuthMiddleware() (*BasicAuthMiddleware, error) {
 
 	factory, err := token.NewJWTTokenFactory(jwtKey)
 	if err != nil {
-		logger.Error("Failed to create jwt maker")
+		logger.Error("Failed to create jwt factory")
 		logger.Error(err)
 		return nil, err
 	}
