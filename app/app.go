@@ -51,11 +51,16 @@ func (a *App) Init() {
 	a.dbs = make(map[string]*db.DB)
 	a.locks = make(map[string]*sync.Mutex)
 
+	//Load config and databases from disk
+	a.loadConfig()
+	a.loadDatabases()
+
 	//Pick the middleware to use for authentication
 	mw, err := auth.NewBasicAuthMiddleware()
 	if err != nil {
 		panic(err)
 	}
+
 	auth.UseMiddleware(mw)
 
 	//Setup the HTTP server
@@ -68,10 +73,6 @@ func (a *App) Init() {
 		Addr:    ":" + *port,
 		Handler: r,
 	}
-
-	//Load config and databases from disk
-	a.loadConfig()
-	a.loadDatabases()
 
 	//Verify DB with playback
 	ldbs := journalplayback.PlayLogs(*journalLocation + "/logfile.txt")
@@ -127,15 +128,25 @@ func (a *App) Run(ctx context.Context) {
 func (a *App) Shutdown() {
 	logger.Info("Shutting down..")
 	//Lock all the databases and write to disk.
+
+	/* Commenting this out for now... it's clearing the db for some reason.
 	for k := range a.locks {
 		go a.writeDBToFile(k)
-	}
+	}*/
 	logger.Info("DBs written to disk")
 }
 
 func (a *App) loadConfig() {
 	if _, err := os.Stat(*journalLocation); os.IsNotExist(err) {
 		err = os.MkdirAll(*journalLocation, 0755)
+		if err != nil {
+			panic(err)
+		}
+	}
+
+	//Handle mgr directory
+	if _, err := os.Stat("mgr"); os.IsNotExist(err) {
+		err = os.MkdirAll("mgr", 0755)
 		if err != nil {
 			panic(err)
 		}
@@ -165,6 +176,7 @@ func (a *App) configWatcher() {
 }
 
 func (a *App) loadDatabases() {
+	//Handle data directory
 	if _, err := os.Stat(*dataLocation); os.IsNotExist(err) {
 		err = os.MkdirAll(*dataLocation, 0755)
 		if err != nil {

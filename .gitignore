@@ -2,6 +2,7 @@
 /vendor
 /logs
 /journals
+/mgr
 crab
 data
 logs.txt

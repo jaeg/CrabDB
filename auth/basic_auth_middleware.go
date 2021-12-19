@@ -2,6 +2,7 @@ package auth
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"net/http"
@@ -10,10 +11,13 @@ import (
 
 	"github.com/google/logger"
 	"github.com/gorilla/mux"
+	"github.com/jaeg/CrabDB/db"
 	"github.com/jaeg/CrabDB/token"
 )
 
 const jwtKey = "12345678910111213141516171819202122232425262728293032"
+const userDBDPath = "mgr/users"
+const userConfigPath = "config/users.json"
 
 //User represents a user of the database.
 type User struct {
@@ -23,23 +27,36 @@ type User struct {
 }
 
 type BasicAuthMiddleware struct {
-	users        map[string]User
 	tokenFactory token.TokenFactory
+	userDB       *db.DB
 }
 
 func NewBasicAuthMiddleware() (*BasicAuthMiddleware, error) {
 	b := &BasicAuthMiddleware{}
-	userJSON, err := ioutil.ReadFile("config/users.json")
 
-	var users map[string]User
-	if err == nil {
-		err := json.Unmarshal([]byte(userJSON), &users)
+	//Check to see if the user DB exists
+	userDB := db.LoadDB(userDBDPath, db.EncryptionKey, "users")
+
+	//If there's no data in the DB set it up.
+	if len(userDB.Raw) == 0 {
+		userDB = db.NewDB("users")
+		logger.Info("User database not setup, initializing")
+		userJSONBytes, err := ioutil.ReadFile(userConfigPath)
 		if err != nil {
-			logger.Error("Failed reading users")
+			return nil, err
 		}
+
+		userJSON := string(userJSONBytes)
+		err = userDB.Set(userJSON)
+		if err != nil {
+			logger.Errorf("Error applying user json %s", err.Error())
+		}
+
+		userDB.Save(userDBDPath, db.EncryptionKey)
+		logger.Info("User database is now setup")
 	}
 
-	b.users = users
+	b.userDB = userDB
 
 	factory, err := token.NewJWTTokenFactory(jwtKey)
 	if err != nil {
@@ -61,12 +78,11 @@ func (b *BasicAuthMiddleware) HandleAuth(w http.ResponseWriter, r *http.Request)
 			return
 		}
 
-		//This is temporary and a very bad solution currently.
-		// I want these stored in the DB itself.
-		expectedUser, ok := b.users[username]
-
-		if !ok {
+		expectedUser, err := b.getUser(username)
+		if err != nil {
+			w.Header().Set("WWW-Authenticate", `Basic realm="restricted", charset="UTF-8"`)
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			logger.Error(err)
 			return
 		}
 
@@ -121,7 +137,14 @@ func (b *BasicAuthMiddleware) Auth(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		availableDBs := strings.Split(b.users[payload.Username].Access, ",")
+		user, err := b.getUser(payload.Username)
+		if err != nil {
+			w.Header().Set("WWW-Authenticate", `Basic realm="restricted", charset="UTF-8"`)
+			http.Error(w, "Unauthorized 1", http.StatusUnauthorized)
+			logger.Error(err)
+			return
+		}
+		availableDBs := strings.Split(user.Access, ",")
 
 		accessCheck := false
 		for _, v := range availableDBs {
@@ -139,4 +162,27 @@ func (b *BasicAuthMiddleware) Auth(next http.HandlerFunc) http.HandlerFunc {
 		//Success
 		next.ServeHTTP(w, r)
 	})
+}
+
+var ErrNoUser = errors.New("no user")
+
+// Wraps what it takes to get the user from the database.
+func (b *BasicAuthMiddleware) getUser(username string) (*User, error) {
+	userJSON, err := b.userDB.Get(username)
+	if err != nil {
+		return nil, err
+	}
+
+	if userJSON == "" {
+		return nil, ErrNoUser
+	}
+
+	//Get the user to look at their info.
+	var user User
+	err = json.Unmarshal([]byte(userJSON), &user)
+	if err != nil {
+		return nil, err
+	}
+
+	return &user, nil
 }
