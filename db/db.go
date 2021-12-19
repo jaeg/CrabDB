@@ -1,40 +1,26 @@
 package db
 
 import (
-	"bufio"
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/md5"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
 	"io/ioutil"
 	"os"
 	"strings"
 
 	"github.com/google/logger"
+	"github.com/jaeg/CrabDB/crypt"
+	"github.com/jaeg/CrabDB/journal"
 )
 
 var EncryptionKey string
-var LogLocation string
 
 //DB represents the database
 type DB struct {
 	ID             string
 	Raw            string
-	Logs           []LogMessage
+	Logs           []journal.LogMessage
 	CurrentLogFile *os.File
 	LogPlayback    bool
-}
-
-//LogMessage represents a database operation.
-type LogMessage struct {
-	Operation string
-	Input     string
-	DBID      string
 }
 
 //NewDB creates a new instance of the database
@@ -55,60 +41,20 @@ func LoadDB(path string, encryptionKey string, id string) *DB {
 		logger.Errorf("Failed loading file: %s", err)
 	} else {
 		if encryptionKey != "" {
-			dat = decrypt([]byte(dat), encryptionKey)
+			dat = crypt.Decrypt([]byte(dat), encryptionKey)
 		}
 		db.Raw = string(dat)
 	}
 	return db
 }
 
-//PlayLogs plays back a log file and returns the resulting db
-func PlayLogs(path string) map[string]*DB {
-	fmt.Println("test", EncryptionKey)
-	logsFile, err := os.Open(path)
-	if err != nil {
-		logger.Errorf("Failed loading file: %s", err)
-		return nil
-	}
-	defer logsFile.Close()
-
-	ldbs := make(map[string]*DB)
-
-	scanner := bufio.NewScanner(logsFile)
-	scanner.Split(bufio.ScanLines)
-
-	for scanner.Scan() {
-		logRaw := scanner.Text()
-		if EncryptionKey != "" {
-			dat := decrypt([]byte(logRaw), EncryptionKey)
-			logRaw = string(dat)
-		}
-		var logM LogMessage
-		err := json.Unmarshal([]byte(logRaw), &logM)
-		if err != nil {
-			logger.Error(err)
-			return nil
-		}
-
-		if ldbs[logM.DBID] == nil {
-			ldbs[logM.DBID] = NewDB(logM.DBID)
-			ldbs[logM.DBID].LogPlayback = true
-		}
-
-		switch logM.Operation {
-		case "set":
-			ldbs[logM.DBID].Set(logM.Input)
-		case "delete":
-			ldbs[logM.DBID].Delete(logM.Input)
-		}
-
-	}
-	return ldbs
-}
-
 //Set sets the input in the database
 func (c *DB) Set(input string) error {
-	c.log("set", input)
+	//Don't log to the journal if you are a playback.
+	if !c.LogPlayback {
+		journal.Log("set", input, c.ID)
+	}
+
 	result, err := applyJSON(c.Raw, input)
 	if err != nil {
 		return err
@@ -141,7 +87,10 @@ func (c *DB) Get(query string) (string, error) {
 
 //Delete deletes the entry in the database
 func (c *DB) Delete(key string) error {
-	c.log("delete", key)
+	//Don't log to the journal if you are a playback.
+	if !c.LogPlayback {
+		journal.Log("delete", key, c.ID)
+	}
 	var result map[string]interface{}
 	err := json.Unmarshal([]byte(c.Raw), &result)
 	if err != nil {
@@ -168,81 +117,12 @@ func (c *DB) Delete(key string) error {
 func (c *DB) Save(path string, encryptionKey string) {
 	outputBytes := []byte(c.Raw)
 	if encryptionKey != "" {
-		outputBytes = encrypt(outputBytes, encryptionKey)
+		outputBytes = crypt.Encrypt(outputBytes, encryptionKey)
 	}
 	err := ioutil.WriteFile(path, outputBytes, 0644)
 	if err != nil {
 		logger.Error(err)
 	}
-}
-
-func (c *DB) log(operation string, input string) {
-	if !c.LogPlayback {
-		logger.Info("Logging message")
-		logFile, err := os.OpenFile(LogLocation+"/logfile.txt", os.O_RDWR|os.O_APPEND|os.O_CREATE, 0755)
-		if err != nil {
-			panic(err)
-		}
-
-		newLog := LogMessage{Operation: operation, Input: input, DBID: c.ID}
-		c.Logs = append(c.Logs, newLog)
-		outputBytes, err := json.Marshal(newLog)
-		if err != nil {
-			logger.Error(err)
-			return
-		}
-
-		if EncryptionKey != "" {
-			outputBytes = encrypt(outputBytes, EncryptionKey)
-		}
-
-		_, err = logFile.WriteString(string(outputBytes) + "\n")
-		if err != nil {
-			logger.Error(err)
-		}
-
-		defer logFile.Close()
-	}
-}
-
-// Got these from: https://www.thepolyglotdeveloper.com/2018/02/encrypt-decrypt-data-golang-application-crypto-packages/
-func encrypt(data []byte, passphrase string) []byte {
-	block, _ := aes.NewCipher([]byte(createHash(passphrase)))
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		panic(err.Error())
-	}
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err = io.ReadFull(rand.Reader, nonce); err != nil {
-		panic(err.Error())
-	}
-	ciphertext := gcm.Seal(nonce, nonce, data, nil)
-	return ciphertext
-}
-
-func decrypt(data []byte, passphrase string) []byte {
-	key := []byte(createHash(passphrase))
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		panic(err.Error())
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		panic(err.Error())
-	}
-	nonceSize := gcm.NonceSize()
-	nonce, ciphertext := data[:nonceSize], data[nonceSize:]
-	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
-	if err != nil {
-		panic(err.Error())
-	}
-	return plaintext
-}
-
-func createHash(key string) string {
-	hasher := md5.New()
-	hasher.Write([]byte(key))
-	return hex.EncodeToString(hasher.Sum(nil))
 }
 
 func applyJSON(o string, i string) (output string, outErr error) {

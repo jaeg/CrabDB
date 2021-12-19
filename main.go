@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -13,9 +12,11 @@ import (
 	"time"
 
 	"github.com/google/logger"
-	"github.com/google/uuid"
 	"github.com/gorilla/mux"
+	"github.com/jaeg/CrabDB/auth"
 	"github.com/jaeg/CrabDB/db"
+	"github.com/jaeg/CrabDB/journal"
+	"github.com/jaeg/CrabDB/journalplayback"
 )
 
 var dbs map[string]*db.DB
@@ -27,30 +28,6 @@ var port = flag.String("port", "8090", "port to host on")
 var dataLocation = flag.String("data-location", "data", "Data location")
 var logLocation = flag.String("log-location", "logs", "Logs location")
 var logPath = flag.String("log-path", "./logs.txt", "Logs location")
-var ignoreAuth = flag.Bool("no-auth", false, "No auth enabled")
-
-//User represents a user of the database.
-type User struct {
-	Username string
-	Password string
-	Access   string
-}
-
-var users = map[string]User{}
-
-//Session represents a user's session after login
-type Session struct {
-	lastUsed time.Time
-	userName string
-}
-
-var sessions map[string]Session
-
-//Credentials represents a set of credentials for a login request.
-type Credentials struct {
-	Password string `json:"password"`
-	Username string `json:"username"`
-}
 
 func main() {
 	flag.Parse()
@@ -63,19 +40,18 @@ func main() {
 	defer logger.Init("CrabDB", true, true, lf).Close()
 
 	logger.Info("CrabDB Started")
-	db.LogLocation = *logLocation
+	journal.LogLocation = *logLocation
 
-	sessions = make(map[string]Session)
 	dbs = make(map[string]*db.DB)
 	locks = make(map[string]*sync.Mutex)
+	auth.Init()
 	loadConfig()
 
-	ldbs := db.PlayLogs(*logLocation + "/logfile.txt")
+	ldbs := journalplayback.PlayLogs(*logLocation + "/logfile.txt")
 	loadDatabases()
 
 	go configWatcher()
 	go bufferWriter()
-	go sessionGroomer()
 
 	//Verify DB with playback
 	for k, v := range dbs {
@@ -91,9 +67,9 @@ func main() {
 	}
 
 	r := mux.NewRouter()
-	r.HandleFunc("/db/{id}", handleDB)
+	r.HandleFunc("/db/{id}", auth.BasicAuth(handleDB))
 	r.HandleFunc("/", handleProbe)
-	r.HandleFunc("/auth", handleAuth)
+	r.HandleFunc("/auth", auth.HandleAuth)
 
 	if *certFile == "" || *keyFile == "" {
 		logger.Info("Starting http")
@@ -103,19 +79,6 @@ func main() {
 		http.ListenAndServeTLS(":"+*port, *certFile, *keyFile, r)
 	}
 
-}
-
-//Grooms the active sessions using the DB
-func sessionGroomer() {
-	for {
-		for k, v := range sessions {
-			if time.Since(v.lastUsed).Seconds() > 120 {
-				logger.Infof("Remove session: %s", k)
-				delete(sessions, k)
-			}
-		}
-		time.Sleep(time.Second * 1)
-	}
 }
 
 func loadConfig() {
@@ -130,16 +93,6 @@ func loadConfig() {
 	if err == nil {
 		db.EncryptionKey = string(cek)
 	}
-
-	userJSON, err := ioutil.ReadFile("config/users.json")
-
-	if err == nil {
-		err := json.Unmarshal([]byte(userJSON), &users)
-		if err != nil {
-			logger.Error("Failed reading users")
-		}
-	}
-
 }
 
 // Watches the configuration file and reloads as necessary.
@@ -205,77 +158,9 @@ func handleProbe(w http.ResponseWriter, req *http.Request) {
 	fmt.Fprintf(w, "{}")
 }
 
-func handleAuth(w http.ResponseWriter, req *http.Request) {
-	if req.Method == "POST" {
-		var creds Credentials
-
-		err := json.NewDecoder(req.Body).Decode(&creds)
-		if err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-
-		expectedUser, ok := users[creds.Username]
-
-		if !ok {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-
-		if expectedUser.Password != creds.Password {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-
-		sessionToken, err := uuid.NewUUID()
-
-		sessions[sessionToken.String()] = Session{userName: creds.Username, lastUsed: time.Now()}
-
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-
-		http.SetCookie(w, &http.Cookie{
-			Name:    "session_token",
-			Value:   sessionToken.String(),
-			Expires: time.Now().Add(120 * time.Second),
-		})
-
-	} else {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		fmt.Fprintf(w, "Invalid operation")
-	}
-}
-
 func handleDB(w http.ResponseWriter, req *http.Request) {
 	vars := mux.Vars(req)
 	dbID := vars["id"]
-
-	session := req.Header.Get("session")
-
-	_, ok := sessions[session]
-	if !ok && !*ignoreAuth {
-		w.WriteHeader(http.StatusUnauthorized)
-		return
-	}
-
-	sessionStruct := sessions[session]
-	sessionStruct.lastUsed = time.Now()
-	sessions[session] = sessionStruct
-	availableDBs := strings.Split(users[sessionStruct.userName].Access, ",")
-
-	accessCheck := false
-	for _, v := range availableDBs {
-		if dbID == v {
-			accessCheck = true
-		}
-	}
-
-	if !accessCheck && !*ignoreAuth {
-		w.WriteHeader(http.StatusUnauthorized)
-		return
-	}
 
 	//Provide a DB please.
 	if dbID == "" {
