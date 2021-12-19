@@ -15,7 +15,8 @@ func UseMiddleware(middleware AuthMiddlewareInterface) {
 func Auth(next http.HandlerFunc) http.HandlerFunc {
 	if currentMiddleware == nil {
 		logger.Error("No middleware set")
-		return nil
+
+		return http.NotFoundHandler().ServeHTTP
 	}
 
 	return currentMiddleware.Auth(next)

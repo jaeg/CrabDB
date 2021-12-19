@@ -44,7 +44,14 @@ func main() {
 
 	dbs = make(map[string]*db.DB)
 	locks = make(map[string]*sync.Mutex)
-	auth.UseMiddleware(auth.NewBasicAuthMiddleware())
+
+	//Pick the middleware to use for authentication
+	mw, err := auth.NewBasicAuthMiddleware()
+	if err != nil {
+		panic(err)
+	}
+	auth.UseMiddleware(mw)
+
 	loadConfig()
 
 	ldbs := journalplayback.PlayLogs(*logLocation + "/logfile.txt")

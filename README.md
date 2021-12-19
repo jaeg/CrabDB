@@ -1,18 +1,13 @@
 # CrabDB
 
-An attempt at a simple json database.
+An attempt at a simple rest based json database for use within a kubernetes cluster.
 
 ###Rest Routes:
 
 `/auth`:
-    - returns session-token
-    - body:
- ```
- {
-	"username":"user",
-	"password":"password"
-}
-```
+- `Post`
+    - Authenticate user using the basic auth header
+    - returns jwt bearer token
 
 `/db/<id>`:
 - `Get`

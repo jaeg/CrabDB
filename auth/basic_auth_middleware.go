@@ -9,9 +9,11 @@ import (
 	"time"
 
 	"github.com/google/logger"
-	"github.com/google/uuid"
 	"github.com/gorilla/mux"
+	"github.com/jaeg/CrabDB/token"
 )
+
+const jwtKey = "12345678910111213141516171819202122232425262728293032"
 
 //User represents a user of the database.
 type User struct {
@@ -20,26 +22,13 @@ type User struct {
 	Access   string
 }
 
-//Session represents a user's session after login
-type Session struct {
-	lastUsed time.Time
-	userName string
-}
-
-//Credentials represents a set of credentials for a login request.
-type Credentials struct {
-	Password string `json:"password"`
-	Username string `json:"username"`
-}
-
 type BasicAuthMiddleware struct {
-	users    map[string]User
-	sessions map[string]Session
+	users        map[string]User
+	tokenFactory token.TokenFactory
 }
 
-func NewBasicAuthMiddleware() *BasicAuthMiddleware {
+func NewBasicAuthMiddleware() (*BasicAuthMiddleware, error) {
 	b := &BasicAuthMiddleware{}
-	b.sessions = make(map[string]Session)
 	userJSON, err := ioutil.ReadFile("config/users.json")
 
 	var users map[string]User
@@ -52,36 +41,46 @@ func NewBasicAuthMiddleware() *BasicAuthMiddleware {
 
 	b.users = users
 
-	go b.sessionGroomer()
+	factory, err := token.NewJWTTokenFactory(jwtKey)
+	if err != nil {
+		logger.Error("Failed to create jwt maker")
+		logger.Error(err)
+		return nil, err
+	}
 
-	return b
+	b.tokenFactory = factory
+
+	return b, nil
 }
 
 func (b *BasicAuthMiddleware) HandleAuth(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "POST" {
-		var creds Credentials
-
-		err := json.NewDecoder(r.Body).Decode(&creds)
-		if err != nil {
-			http.Error(w, "Unauthorized 1", http.StatusUnauthorized)
+		username, password, ok := r.BasicAuth()
+		if !ok {
+			http.Error(w, "No basic auth credentials provided", http.StatusUnauthorized)
 			return
 		}
 
-		expectedUser, ok := b.users[creds.Username]
+		//This is temporary and a very bad solution currently.
+		// I want these stored in the DB itself.
+		expectedUser, ok := b.users[username]
 
 		if !ok {
-			http.Error(w, "Unauthorized 2", http.StatusUnauthorized)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
 
-		if expectedUser.Password != creds.Password {
-			http.Error(w, "Unauthorized 3", http.StatusUnauthorized)
+		if expectedUser.Password != password {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
 
-		sessionToken, err := uuid.NewUUID()
-
-		b.sessions[sessionToken.String()] = Session{userName: creds.Username, lastUsed: time.Now()}
+		token, err := b.tokenFactory.CreateToken(username, time.Hour)
+		if err != nil {
+			logger.Error("Failed to create jwt token")
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
 
 		if err != nil {
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -91,7 +90,7 @@ func (b *BasicAuthMiddleware) HandleAuth(w http.ResponseWriter, r *http.Request)
 
 		http.SetCookie(w, &http.Cookie{
 			Name:    "session_token",
-			Value:   sessionToken.String(),
+			Value:   token,
 			Expires: time.Now().Add(120 * time.Second),
 		})
 
@@ -107,20 +106,26 @@ func (b *BasicAuthMiddleware) Auth(next http.HandlerFunc) http.HandlerFunc {
 		vars := mux.Vars(r)
 		dbID := vars["id"]
 
-		session := r.Header.Get("session")
+		authHeader := strings.Split(r.Header.Get("Authorization"), "Bearer ")
 
-		_, ok := b.sessions[session]
+		//Bearer token validation
+		if len(authHeader) != 2 {
+			w.Header().Set("WWW-Authenticate", `Basic realm="restricted", charset="UTF-8"`)
+			http.Error(w, "No bearer token", http.StatusUnauthorized)
+			return
+		}
 
-		if !ok {
+		jwtToken := authHeader[1]
+
+		payload, err := b.tokenFactory.VerifyToken(jwtToken)
+
+		if err != nil {
 			w.Header().Set("WWW-Authenticate", `Basic realm="restricted", charset="UTF-8"`)
 			http.Error(w, "Unauthorized 1", http.StatusUnauthorized)
 			return
 		}
 
-		sessionStruct := b.sessions[session]
-		sessionStruct.lastUsed = time.Now()
-		b.sessions[session] = sessionStruct
-		availableDBs := strings.Split(b.users[sessionStruct.userName].Access, ",")
+		availableDBs := strings.Split(b.users[payload.Username].Access, ",")
 
 		accessCheck := false
 		for _, v := range availableDBs {
@@ -138,17 +143,4 @@ func (b *BasicAuthMiddleware) Auth(next http.HandlerFunc) http.HandlerFunc {
 		//Success
 		next.ServeHTTP(w, r)
 	})
-}
-
-//Grooms the active sessions using the DB
-func (b *BasicAuthMiddleware) sessionGroomer() {
-	for {
-		for k, v := range b.sessions {
-			if time.Since(v.lastUsed).Seconds() > 120 {
-				logger.Infof("Remove session: %s", k)
-				delete(b.sessions, k)
-			}
-		}
-		time.Sleep(time.Second * 1)
-	}
 }
