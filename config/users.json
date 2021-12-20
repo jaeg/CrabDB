@@ -1,7 +1,1 @@
-{
-    "user": {
-        "Username":"user",
-        "password":"password",
-        "access":"1,2,3"
-    }
-}
+{"test":{"Access":"1,2,3,4","Admin":false,"Password":"","Username":"test"},"user":{"Username":"user","access":"1,2,3","password":"password"}}

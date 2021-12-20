@@ -3,6 +3,7 @@ package manager
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/ioutil"
 	"os"
 
@@ -15,6 +16,7 @@ type User struct {
 	Username string
 	Password string
 	Access   string
+	Admin    bool
 }
 
 const userDBDPath = "mgr/users"
@@ -48,6 +50,11 @@ func LoadUserDatabase() error {
 		userDB.Save(userDBDPath, db.EncryptionKey)
 		logger.Info("User database is now setup")
 	}
+
+	user := User{Username: "test", Access: "1,2,3,4"}
+	CreateUser(user)
+
+	fmt.Println(userDB)
 	return nil
 }
 
@@ -63,7 +70,7 @@ func GetUser(username string) (*User, error) {
 		return nil, err
 	}
 
-	if userJSON == "" {
+	if userJSON == "null" {
 		return nil, ErrNoUser
 	}
 
@@ -75,4 +82,56 @@ func GetUser(username string) (*User, error) {
 	}
 
 	return &user, nil
+}
+
+func UpdateUser(user User) {
+	if userDB == nil {
+		LoadUserDatabase()
+	}
+	u, err := userDB.Get(user.Username)
+
+	if err == nil {
+		if u != "null" {
+			newUser := make(map[string]interface{})
+			newUser[user.Username] = user
+			userJSON, err := json.Marshal(newUser)
+			if err != nil {
+				logger.Errorf("Error updating user %s", err.Error())
+			}
+
+			err = userDB.Set(string(userJSON))
+			if err != nil {
+				logger.Errorf("Error creating user %s", err.Error())
+			}
+			userDB.Save(userConfigPath, db.EncryptionKey)
+		}
+	} else {
+		logger.Error(err)
+	}
+}
+
+func CreateUser(user User) {
+	if userDB == nil {
+		LoadUserDatabase()
+	}
+	u, err := userDB.Get(user.Username)
+
+	if err == nil {
+		if u == "null" {
+			newUser := make(map[string]interface{})
+			newUser[user.Username] = user
+			userJSON, err := json.Marshal(newUser)
+			if err != nil {
+				logger.Errorf("Error updating user %s", err.Error())
+			}
+
+			err = userDB.Set(string(userJSON))
+			if err != nil {
+				logger.Errorf("Error creating user %s", err.Error())
+			}
+			userDB.Save(userConfigPath, db.EncryptionKey)
+		}
+	} else {
+		logger.Error(err)
+	}
 }

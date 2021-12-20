@@ -49,6 +49,13 @@ func (b *BasicAuthMiddleware) HandleAuth(w http.ResponseWriter, r *http.Request)
 			return
 		}
 
+		if expectedUser == nil {
+			w.Header().Set("WWW-Authenticate", `Basic realm="restricted", charset="UTF-8"`)
+			http.Error(w, "Unauthorized 1", http.StatusUnauthorized)
+			logger.Error(err)
+			return
+		}
+
 		if expectedUser.Password != password {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
@@ -102,6 +109,13 @@ func (b *BasicAuthMiddleware) Auth(next http.HandlerFunc) http.HandlerFunc {
 
 		user, err := manager.GetUser(payload.Username)
 		if err != nil {
+			w.Header().Set("WWW-Authenticate", `Basic realm="restricted", charset="UTF-8"`)
+			http.Error(w, "Unauthorized 1", http.StatusUnauthorized)
+			logger.Error(err)
+			return
+		}
+
+		if user == nil {
 			w.Header().Set("WWW-Authenticate", `Basic realm="restricted", charset="UTF-8"`)
 			http.Error(w, "Unauthorized 1", http.StatusUnauthorized)
 			logger.Error(err)
