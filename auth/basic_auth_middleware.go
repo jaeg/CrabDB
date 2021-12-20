@@ -1,67 +1,25 @@
 package auth
 
 import (
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io/ioutil"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/google/logger"
 	"github.com/gorilla/mux"
-	"github.com/jaeg/CrabDB/db"
+	"github.com/jaeg/CrabDB/manager"
 	"github.com/jaeg/CrabDB/token"
 )
 
 const jwtKey = "12345678910111213141516171819202122232425262728293032"
-const userDBDPath = "mgr/users"
-const userConfigPath = "config/users.json"
-
-//User represents a user of the database.
-type User struct {
-	Username string
-	Password string
-	Access   string
-}
 
 type BasicAuthMiddleware struct {
 	tokenFactory token.TokenFactory
-	userDB       *db.DB
 }
 
 func NewBasicAuthMiddleware() (*BasicAuthMiddleware, error) {
 	b := &BasicAuthMiddleware{}
-
-	//Check to see if the user DB exists
-	userDB := db.LoadDB(userDBDPath, db.EncryptionKey, "users")
-
-	//If there's no data in the DB set it up.
-	if len(userDB.Raw) == 0 {
-		userDB = db.NewDB("users")
-		logger.Info("User database not setup, initializing")
-		if _, err := os.Stat(userConfigPath); os.IsNotExist(err) {
-			logger.Error("No initial user config present")
-		} else {
-			userJSONBytes, err := ioutil.ReadFile(userConfigPath)
-			if err != nil {
-				return nil, err
-			}
-
-			userJSON := string(userJSONBytes)
-			err = userDB.Set(userJSON)
-			if err != nil {
-				logger.Errorf("Error applying user json %s", err.Error())
-			}
-		}
-
-		userDB.Save(userDBDPath, db.EncryptionKey)
-		logger.Info("User database is now setup")
-	}
-
-	b.userDB = userDB
 
 	factory, err := token.NewJWTTokenFactory(jwtKey)
 	if err != nil {
@@ -83,7 +41,7 @@ func (b *BasicAuthMiddleware) HandleAuth(w http.ResponseWriter, r *http.Request)
 			return
 		}
 
-		expectedUser, err := b.getUser(username)
+		expectedUser, err := manager.GetUser(username)
 		if err != nil {
 			w.Header().Set("WWW-Authenticate", `Basic realm="restricted", charset="UTF-8"`)
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -142,7 +100,7 @@ func (b *BasicAuthMiddleware) Auth(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		user, err := b.getUser(payload.Username)
+		user, err := manager.GetUser(payload.Username)
 		if err != nil {
 			w.Header().Set("WWW-Authenticate", `Basic realm="restricted", charset="UTF-8"`)
 			http.Error(w, "Unauthorized 1", http.StatusUnauthorized)
@@ -167,27 +125,4 @@ func (b *BasicAuthMiddleware) Auth(next http.HandlerFunc) http.HandlerFunc {
 		//Success
 		next.ServeHTTP(w, r)
 	})
-}
-
-var ErrNoUser = errors.New("no user")
-
-// Wraps what it takes to get the user from the database.
-func (b *BasicAuthMiddleware) getUser(username string) (*User, error) {
-	userJSON, err := b.userDB.Get(username)
-	if err != nil {
-		return nil, err
-	}
-
-	if userJSON == "" {
-		return nil, ErrNoUser
-	}
-
-	//Get the user to look at their info.
-	var user User
-	err = json.Unmarshal([]byte(userJSON), &user)
-	if err != nil {
-		return nil, err
-	}
-
-	return &user, nil
 }

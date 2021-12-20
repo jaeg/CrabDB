@@ -18,6 +18,7 @@ import (
 	"github.com/jaeg/CrabDB/db"
 	"github.com/jaeg/CrabDB/journal"
 	"github.com/jaeg/CrabDB/journalplayback"
+	"github.com/jaeg/CrabDB/manager"
 )
 
 var certFile = flag.String("cert-file", "", "location of cert file")
@@ -151,6 +152,8 @@ func (a *App) loadConfig() {
 			panic(err)
 		}
 	}
+
+	manager.Init()
 
 	//Encryption key settings
 	cek, err := ioutil.ReadFile("config/encryptionkey")
