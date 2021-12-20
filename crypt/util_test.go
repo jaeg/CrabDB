@@ -2,6 +2,8 @@ package crypt
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 const inputConstant = "I'mSomeGoodInput"
@@ -9,17 +11,10 @@ const passphrase = "I'mASecurePassphrase"
 
 func TestValuesEncryptedAreDecryptable(t *testing.T) {
 	encrypted, err := Encrypt([]byte(inputConstant), passphrase)
-
-	if err != nil {
-		t.Errorf("Error on the encrypt %s", err.Error())
-	}
+	assert.Equal(t, nil, err, "shouldn't error on encrypt")
 
 	decrypted, err := Decrypt(encrypted, passphrase)
-	if err != nil {
-		t.Errorf("Error on the decrypt %s", err.Error())
-	}
+	assert.Equal(t, nil, err, "shouldn't error on decrypt")
 
-	if string(decrypted) != inputConstant {
-		t.Errorf("Expected %s got %s", inputConstant, string(decrypted))
-	}
+	assert.Equal(t, string(decrypted), inputConstant, "should be equal")
 }

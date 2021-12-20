@@ -2,13 +2,13 @@ package db
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func Test_New_DB(t *testing.T) {
 	db := NewDB("1")
-	if db == nil {
-		t.Errorf("New DB returned nil")
-	}
+	assert.NotEqual(t, nil, db, "shouldn't be nil")
 }
 
 func Test_DB_Set(t *testing.T) {
@@ -18,9 +18,7 @@ func Test_DB_Set(t *testing.T) {
 
 	err := db.Set(input)
 
-	if err != nil {
-		t.Errorf("Error setting value in db %s", err.Error())
-	}
+	assert.Equal(t, nil, err, "shouldn't error setting value")
 }
 
 func Test_DB_Get(t *testing.T) {
@@ -30,20 +28,13 @@ func Test_DB_Get(t *testing.T) {
 
 	err := db.Set(input)
 
-	if err != nil {
-		t.Errorf("Error setting value in db %s", err.Error())
-	}
+	assert.Equal(t, nil, err, "shouldn't error setting value")
 
 	value, err := db.Get("test")
 
-	if err != nil {
-		t.Errorf("Error getting value in db %s", err.Error())
-	}
+	assert.Equal(t, nil, err, "shouldn't error getting value")
 
-	if value != "0" {
-		t.Errorf("Value in DB %s expect 0", value)
-
-	}
+	assert.Equal(t, "0", value, "should equal 0")
 }
 
 func Test_DB_Delete(t *testing.T) {
@@ -53,24 +44,14 @@ func Test_DB_Delete(t *testing.T) {
 
 	err := db.Set(input)
 
-	if err != nil {
-		t.Errorf("Error setting value in db %s", err.Error())
-	}
+	assert.Equal(t, nil, err, "shouldn't error setting value")
 
 	err = db.Delete("test")
-
-	if err != nil {
-		t.Errorf("Error deleting value in db %s", err.Error())
-	}
+	assert.Equal(t, nil, err, "shouldn't error deleting value")
 
 	value, err := db.Get("test")
 
-	if err != nil {
-		t.Errorf("Error getting value in db %s", err.Error())
-	}
+	assert.Equal(t, nil, err, "shouldn't error getting value")
 
-	if value == "0" {
-		t.Errorf("Value in DB %s expect it to not exist", value)
-
-	}
+	assert.NotEqual(t, "0", value, "value shouldn't be 0")
 }
