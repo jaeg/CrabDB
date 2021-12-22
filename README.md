@@ -1,6 +1,30 @@
 # CrabDB
 
-An attempt at a simple rest based json database for use within a kubernetes cluster.
+An attempt at a simple rest based json database.
+
+### How to Run
+#### Option 1: From source
+- `make vendor`
+- `make run`
+
+#### Option 2: Build it
+- `make vendor`
+- `make build` - will build for current system architecture. 
+- `make build-linux` - will build Linux distributable
+- `make build-pi` - will build Raspberry Pi compatible distributable
+- You will find the executable in the `./bin` folder.
+
+#### Option 3: Docker
+Linux images:
+- `docker run -d jaeg/crabdb:latest`
+
+Raspberry pi images:
+- `docker run -d jaeg/crabdb:latest-pi`
+
+### Configuration
+Currently configuration is stored in the `./config` folder.  Inside there is:
+- `encryptionkey` - stores the encryption key used to encrypt the databases.  Leave blank to not encrypt.
+- `users.json` - on first boot CrabDB uses this file to setup the initial users.
 
 ###Rest Routes:
 
