@@ -1,1 +1,16 @@
-{"test":{"Access":"1,2,3,4","Admin":false,"Password":"","Username":"test"},"user":{"Username":"user","access":"1,2,3","password":"password"}}
+{
+    "test": {
+      "Access": "1,2,3,4",
+      "Admin": false,
+      "Password": "password",
+      "Username": "test",
+      "Enabled": true
+    },
+    "user": {
+      "Access": "1,2,3,4",
+      "Admin": false,
+      "Password": "password",
+      "Username": "user",
+      "Enabled": true
+    }
+  }

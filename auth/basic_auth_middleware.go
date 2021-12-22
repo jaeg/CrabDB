@@ -103,24 +103,32 @@ func (b *BasicAuthMiddleware) Auth(next http.HandlerFunc) http.HandlerFunc {
 
 		if err != nil {
 			w.Header().Set("WWW-Authenticate", `Basic realm="restricted", charset="UTF-8"`)
-			http.Error(w, "Unauthorized 1", http.StatusUnauthorized)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
 
 		user, err := manager.GetUser(payload.Username)
 		if err != nil {
 			w.Header().Set("WWW-Authenticate", `Basic realm="restricted", charset="UTF-8"`)
-			http.Error(w, "Unauthorized 1", http.StatusUnauthorized)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			logger.Error(err)
 			return
 		}
 
 		if user == nil {
 			w.Header().Set("WWW-Authenticate", `Basic realm="restricted", charset="UTF-8"`)
-			http.Error(w, "Unauthorized 1", http.StatusUnauthorized)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			logger.Error(err)
 			return
 		}
+
+		if !user.Enabled {
+			w.Header().Set("WWW-Authenticate", `Basic realm="restricted", charset="UTF-8"`)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			logger.Error(err)
+			return
+		}
+
 		availableDBs := strings.Split(user.Access, ",")
 
 		accessCheck := false

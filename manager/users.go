@@ -3,7 +3,6 @@ package manager
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io/ioutil"
 	"os"
 
@@ -17,6 +16,7 @@ type User struct {
 	Password string
 	Access   string
 	Admin    bool
+	Enabled  bool
 }
 
 const userDBDPath = "mgr/users"
@@ -51,10 +51,9 @@ func LoadUserDatabase() error {
 		logger.Info("User database is now setup")
 	}
 
-	user := User{Username: "test", Access: "1,2,3,4"}
+	user := User{Username: "test", Access: "1,2,3,4", Enabled: true}
 	CreateUser(user)
 
-	fmt.Println(userDB)
 	return nil
 }
 
@@ -103,7 +102,7 @@ func UpdateUser(user User) {
 			if err != nil {
 				logger.Errorf("Error creating user %s", err.Error())
 			}
-			userDB.Save(userConfigPath, db.EncryptionKey)
+			userDB.Save(userDBDPath, db.EncryptionKey)
 		}
 	} else {
 		logger.Error(err)
@@ -129,9 +128,27 @@ func CreateUser(user User) {
 			if err != nil {
 				logger.Errorf("Error creating user %s", err.Error())
 			}
-			userDB.Save(userConfigPath, db.EncryptionKey)
+			userDB.Save(userDBDPath, db.EncryptionKey)
 		}
 	} else {
 		logger.Error(err)
 	}
+}
+
+func DeleteUser(user string) {
+	if userDB == nil {
+		LoadUserDatabase()
+	}
+
+	if user == "" {
+		logger.Errorf("No user provided to delete")
+	}
+
+	err := userDB.Delete(user)
+
+	if err != nil {
+		logger.Errorf("Error deleting user %s", err.Error())
+	}
+
+	userDB.Save(userDBDPath, db.EncryptionKey)
 }
