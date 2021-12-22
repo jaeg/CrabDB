@@ -64,6 +64,11 @@ func GetUser(username string) (*User, error) {
 		LoadUserDatabase()
 	}
 
+	if username == "" {
+		logger.Errorf("No user provided to delete")
+		return nil, errors.New("no username provided")
+	}
+
 	userJSON, err := userDB.Get(username)
 	if err != nil {
 		return nil, err
@@ -83,7 +88,7 @@ func GetUser(username string) (*User, error) {
 	return &user, nil
 }
 
-func UpdateUser(user User) {
+func UpdateUser(user User) error {
 	if userDB == nil {
 		LoadUserDatabase()
 	}
@@ -96,23 +101,29 @@ func UpdateUser(user User) {
 			userJSON, err := json.Marshal(newUser)
 			if err != nil {
 				logger.Errorf("Error updating user %s", err.Error())
+				return err
 			}
 
 			err = userDB.Set(string(userJSON))
 			if err != nil {
-				logger.Errorf("Error creating user %s", err.Error())
+				logger.Errorf("Error updating user %s", err.Error())
+				return err
 			}
 			userDB.Save(userDBDPath, db.EncryptionKey)
 		}
 	} else {
 		logger.Error(err)
+		return err
 	}
+
+	return nil
 }
 
-func CreateUser(user User) {
+func CreateUser(user User) error {
 	if userDB == nil {
 		LoadUserDatabase()
 	}
+
 	u, err := userDB.Get(user.Username)
 
 	if err == nil {
@@ -122,33 +133,45 @@ func CreateUser(user User) {
 			userJSON, err := json.Marshal(newUser)
 			if err != nil {
 				logger.Errorf("Error updating user %s", err.Error())
+				return err
 			}
 
 			err = userDB.Set(string(userJSON))
 			if err != nil {
 				logger.Errorf("Error creating user %s", err.Error())
+				return err
 			}
 			userDB.Save(userDBDPath, db.EncryptionKey)
 		}
 	} else {
 		logger.Error(err)
+		return err
 	}
+	return nil
 }
 
-func DeleteUser(user string) {
+func DeleteUser(username string) error {
 	if userDB == nil {
 		LoadUserDatabase()
 	}
 
-	if user == "" {
+	if username == "" {
 		logger.Errorf("No user provided to delete")
+		return errors.New("no username provided")
 	}
 
-	err := userDB.Delete(user)
+	if _, err := GetUser(username); err == ErrNoUser {
+		return ErrNoUser
+	}
+
+	err := userDB.Delete(username)
 
 	if err != nil {
 		logger.Errorf("Error deleting user %s", err.Error())
+		return err
 	}
 
 	userDB.Save(userDBDPath, db.EncryptionKey)
+
+	return nil
 }

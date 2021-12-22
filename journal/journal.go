@@ -16,10 +16,11 @@ type LogMessage struct {
 	DBID      string
 }
 
-func Log(operation string, input string, dbId string) {
+func Log(operation string, input string, dbId string) error {
 	logFile, err := os.OpenFile(LogLocation+"/logfile.txt", os.O_RDWR|os.O_APPEND|os.O_CREATE, 0755)
 	if err != nil {
-		panic(err)
+		logger.Errorf("Error logging %s", err.Error())
+		return err
 	}
 
 	newLog := LogMessage{Operation: operation, Input: input, DBID: dbId}
@@ -27,7 +28,7 @@ func Log(operation string, input string, dbId string) {
 	outputBytes, err := json.Marshal(newLog)
 	if err != nil {
 		logger.Error(err)
-		return
+		return err
 	}
 
 	/*
@@ -42,4 +43,5 @@ func Log(operation string, input string, dbId string) {
 
 	defer logFile.Close()
 
+	return nil
 }
